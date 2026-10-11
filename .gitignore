@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Datos pesados (no se versionan: se descargan con scripts/)
+datos/entrada/*
+datos/salida/*
+!datos/**/.gitkeep
+*.tif
+*.tiff
+*.h5
+*.nc
+*.zip
+
+# Entorno
+.env
+.env.local
+
+# Editores / SO
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
