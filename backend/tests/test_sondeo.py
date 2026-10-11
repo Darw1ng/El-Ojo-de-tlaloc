@@ -573,3 +573,75 @@ def test_el_pwat_de_un_vuelo_bajo_es_chico_y_se_declara_parcial():
 def test_el_csv_vacio_o_solo_comentarios_falla_claro():
     with pytest.raises(ErrorFuente, match="ninguna linea de datos"):
         leer_csv_globo("# solo comentarios\n# y nada mas\n")
+
+
+# --- perfil vertical contra serie en un punto -----------------------------
+#
+# Si la plataforma se MANTIENE en el aire en lugar de ascender, el dato que
+# produce es otra cosa: una estacion meteorologica elevada. Pasarsela al
+# codigo del perfil produce indices sin sentido con cara de medicion.
+
+
+def _serie_a_altura_fija(n=60, presion=1002.4, ruido=0.3, semilla=1):
+    rng = np.random.default_rng(semilla)
+    filas = ["presion_hpa,temp_c,humedad_rel"]
+    for _ in range(n):
+        filas.append("{:.2f},{:.2f},{:.1f}".format(
+            presion + rng.uniform(-ruido, ruido),
+            27.5 + rng.uniform(-0.6, 0.6),
+            79 + rng.uniform(-2, 2)))
+    return "\n".join(filas) + "\n"
+
+
+def test_una_plataforma_que_asciende_da_un_perfil():
+    from ojo_tlaloc.fuentes.sondeo import clasificar_registro
+
+    p = leer_csv_globo(CSV_ESTACION)
+    r = clasificar_registro(p.presion_hpa)
+    assert r["tipo"] == "perfil"
+    assert r["es_perfil"] is True
+    assert r["rango_hpa"] > 5.0
+
+
+def test_una_plataforma_que_se_mantiene_no_da_un_perfil():
+    """El caso de un globo cautivo o un dron sosteniendo la capsula: 60
+    muestras a la misma altura no son 60 niveles."""
+    from ojo_tlaloc.fuentes.sondeo import clasificar_registro
+
+    p = leer_csv_globo(_serie_a_altura_fija())
+    r = clasificar_registro(p.presion_hpa)
+    assert r["tipo"] == "serie_estacionaria"
+    assert r["es_perfil"] is False
+    assert r["rango_hpa"] < 5.0
+    assert r["muestras"] == 60
+    assert "NO un perfil" in r["mensaje"]
+    assert "estacion meteorologica elevada" in r["mensaje"]
+
+
+def test_la_serie_estacionaria_no_pretende_dar_cape():
+    """Lo importante: que el sistema lo DIGA. Una serie a altura fija
+    ordenada por presion produce un 'perfil' de niveles casi identicos, y sin
+    este aviso sus indices pasarian por mediciones."""
+    from ojo_tlaloc.fuentes.sondeo import clasificar_registro
+
+    p = leer_csv_globo(_serie_a_altura_fija())
+    r = p.resumen()
+    assert r["registro"]["es_perfil"] is False
+    # Y la cobertura vertical tambien la descarta, por el otro camino.
+    assert r["cobertura_vertical"]["confiables"]["cape_j_kg"] is False
+
+
+def test_el_resumen_siempre_clasifica_el_registro(perfil):
+    r = perfil.resumen()
+    assert "registro" in r
+    assert r["registro"]["tipo"] in ("perfil", "serie_estacionaria",
+                                     "insuficiente")
+    assert r["registro"]["muestras"] == perfil.presion_hpa.size
+
+
+def test_clasificar_con_una_sola_muestra():
+    from ojo_tlaloc.fuentes.sondeo import clasificar_registro
+
+    r = clasificar_registro([1000.0])
+    assert r["tipo"] == "insuficiente"
+    assert r["es_perfil"] is False

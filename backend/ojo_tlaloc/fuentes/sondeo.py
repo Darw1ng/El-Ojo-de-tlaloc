@@ -106,6 +106,24 @@ TOPE_REQUERIDO_HPA = {
     "cape_j_kg": 200.0,      # CAPE completo: hay que alcanzar el equilibrio
 }
 
+#: Rango minimo de presion, en hPa, para que un registro sea un PERFIL y no
+#: una serie temporal en un punto.
+#:
+#: La distincion importa y no es obvia. Una sonda que ASCIENDE produce un
+#: perfil: cada muestra es una altura distinta y de ahi salen CAPE, PWAT y
+#: LCL, que son integrales en la vertical. Una plataforma que se MANTIENE en
+#: el aire a altura fija produce otra cosa igual de valiosa pero distinta:
+#: una estacion meteorologica elevada, con una serie en el tiempo a presion
+#: casi constante.
+#:
+#: Si se le pasa la segunda al codigo del perfil, ordena las muestras por
+#: presion, arma un "perfil" de niveles casi identicos y devuelve indices sin
+#: sentido con cara de medicion. Por eso se detecta y se dice.
+#:
+#: 5 hPa al nivel del mar son unos 45 m de desnivel. Menos que eso no alcanza
+#: para integrar nada.
+RANGO_MINIMO_PERFIL_HPA = 5.0
+
 #: Fraccion tipica del agua precipitable que queda por DEBAJO de cada nivel,
 #: en atmosfera tropical humeda. Sirve para decir cuanto PWAT falta cuando el
 #: perfil se queda corto, en lugar de entregar un numero incompleto a secas.
@@ -424,6 +442,7 @@ class PerfilAtmosferico:
             "interpretacion": interpretar_indices(self.indices),
             "avisos": validar_indices(self.indices),
             "cobertura_vertical": evaluar_cobertura_vertical(self.indices),
+            "registro": clasificar_registro(self.presion_hpa, self.altura_m),
         }
 
 
@@ -667,6 +686,62 @@ COEFICIENTES_PROBIT_PROVISIONALES = {
     "pwat_mm": 0.55,
     "cin_j_kg": -0.30,
 }
+
+
+def clasificar_registro(presion_hpa, altura_m=None) -> dict:
+    """Distingue un PERFIL vertical de una SERIE en un punto fijo.
+
+    Las dos cosas son utiles y no son la misma:
+
+        PERFIL (la sonda asciende)
+            cada muestra es una altura distinta. De aqui salen CAPE, PWAT y
+            LCL, que son integrales en la vertical.
+
+        SERIE ESTACIONARIA (la plataforma se mantiene en el aire)
+            presion casi constante y muchas muestras en el tiempo. Esto es
+            una estacion meteorologica elevada: sirve para medir la evolucion
+            del dia, inversiones termicas y el viento a altura de trabajo,
+            pero NO para integrar nada en la vertical.
+
+    Si una serie estacionaria entra al codigo del perfil, este la ordena por
+    presion, arma niveles casi identicos y devuelve indices sin sentido que
+    parecen mediciones. Por eso se clasifica antes y se dice cual es cual.
+    """
+    p = np.asarray(presion_hpa, dtype=float)
+    p = p[np.isfinite(p)]
+    if p.size < 2:
+        return {"tipo": "insuficiente", "rango_hpa": 0.0, "muestras": int(p.size),
+                "es_perfil": False,
+                "mensaje": "hacen falta al menos dos muestras"}
+
+    rango = float(p.max() - p.min())
+    desnivel_m = _altura_aproximada_de(float(p.min())) * 1000.0         - _altura_aproximada_de(float(p.max())) * 1000.0
+    es_perfil = rango >= RANGO_MINIMO_PERFIL_HPA
+
+    if es_perfil:
+        mensaje = ("perfil vertical: {:.0f} hPa de rango, unos {:.0f} m de "
+                   "desnivel.").format(rango, desnivel_m)
+        tipo = "perfil"
+    else:
+        tipo = "serie_estacionaria"
+        mensaje = (
+            "serie en un punto, NO un perfil: {} muestras con solo {:.1f} hPa "
+            "de rango (unos {:.0f} m). Sirve como estacion meteorologica "
+            "elevada —evolucion en el tiempo, inversiones, viento a altura de "
+            "trabajo— pero no se puede integrar CAPE ni agua precipitable, "
+            "que necesitan que la sonda atraviese la vertical."
+        ).format(p.size, rango, desnivel_m)
+
+    return {
+        "tipo": tipo,
+        "es_perfil": bool(es_perfil),
+        "muestras": int(p.size),
+        "rango_hpa": round(rango, 2),
+        "desnivel_m_aprox": round(desnivel_m, 1),
+        "presion_min_hpa": round(float(p.min()), 2),
+        "presion_max_hpa": round(float(p.max()), 2),
+        "mensaje": mensaje,
+    }
 
 
 def evaluar_cobertura_vertical(indices: dict) -> dict:
