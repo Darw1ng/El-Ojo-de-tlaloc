@@ -86,6 +86,39 @@ CERO_C = 273.15
 #: Niveles estandar para los indices clasicos, en hPa.
 NIVELES_ESTANDAR = (1000, 925, 850, 700, 500, 400, 300, 250, 200)
 
+#: Hasta donde tiene que llegar el perfil para que cada indice sea confiable.
+#:
+#: Esto importa mucho mas de lo que parece, y define que sensor hay que
+#: comprar. El CAPE es una integral desde el nivel de conveccion libre hasta
+#: el nivel de equilibrio, que en el tropico humedo esta entre 150 y 200 hPa
+#: (12 a 14 km). Un perfil que termina a 500 hPa no da un CAPE "aproximado":
+#: da un CAPE severamente subestimado, y sin aviso parece un dato bueno.
+#:
+#: Caso concreto: el BME280, que es el sensor de presion/temperatura/humedad
+#: mas usado en proyectos caseros, especifica presion de 300 a 1100 hPa. Eso
+#: corta el perfil alrededor de 9 km y trunca el CAPE.
+TOPE_REQUERIDO_HPA = {
+    "lcl": 800.0,            # el LCL esta en los primeros 1-2 km
+    "pwat": 400.0,           # ~95% del agua de la columna esta debajo
+    "indice_k": 500.0,       # necesita 850, 700 y 500
+    "total_totals": 500.0,   # necesita 850 y 500
+    "cape_parcial": 400.0,   # algo de CAPE, pero truncado
+    "cape_j_kg": 200.0,      # CAPE completo: hay que alcanzar el equilibrio
+}
+
+#: Fraccion tipica del agua precipitable que queda por DEBAJO de cada nivel,
+#: en atmosfera tropical humeda. Sirve para decir cuanto PWAT falta cuando el
+#: perfil se queda corto, en lugar de entregar un numero incompleto a secas.
+FRACCION_PWAT_BAJO = {
+    850.0: 0.60,
+    700.0: 0.80,
+    600.0: 0.87,
+    500.0: 0.92,
+    400.0: 0.96,
+    300.0: 0.98,
+    200.0: 0.995,
+}
+
 
 def presion_vapor_saturacion_hpa(t_c):
     """Presion de vapor de saturacion por la formula de Bolton (1980), en hPa.
@@ -390,6 +423,7 @@ class PerfilAtmosferico:
             "indices": self.indices,
             "interpretacion": interpretar_indices(self.indices),
             "avisos": validar_indices(self.indices),
+            "cobertura_vertical": evaluar_cobertura_vertical(self.indices),
         }
 
 
@@ -486,12 +520,25 @@ def leer_csv_globo(texto: str, estacion: str = "globo propio",
     correcto, no un fallo. El viento y la temperatura de los primeros cientos
     de metros si quedan, que es justo lo que se necesita para obra.
     """
-    muestra = texto[:4096]
+    # Las lineas de comentario se quitan ANTES de buscar el encabezado. La
+    # estacion de tierra del CanSat escribe comentarios con '#' para anotar
+    # que sensor se detecto y cuantos paquetes se perdieron, y sin esto el
+    # lector tomaba el primer comentario como encabezado de columnas.
+    # Documentar el vuelo dentro del propio archivo es buena practica; el
+    # que tiene que ser tolerante es el lector.
+    limpio = "\n".join(
+        linea for linea in texto.splitlines()
+        if linea.strip() and not linea.lstrip().startswith(("#", "//"))
+    )
+    if not limpio.strip():
+        raise ErrorFuente("el CSV no tiene ninguna linea de datos")
+
+    muestra = limpio[:4096]
     try:
         dialecto = csv.Sniffer().sniff(muestra, delimiters=",;\t")
     except csv.Error:
         dialecto = csv.excel
-    lector = csv.DictReader(io.StringIO(texto), dialect=dialecto)
+    lector = csv.DictReader(io.StringIO(limpio), dialect=dialecto)
     if not lector.fieldnames:
         raise ErrorFuente("el CSV no tiene encabezado de columnas")
 
@@ -518,11 +565,13 @@ def leer_csv_globo(texto: str, estacion: str = "globo propio",
         )
 
     filas = []
+    n_con_pt = 0          # filas con presion y temperatura validas
     for fila in lector:
         p = _flotante(fila.get(mapa["presion"]))
         t = _flotante(fila.get(mapa["temperatura"]))
         if not (math.isfinite(p) and math.isfinite(t)):
             continue
+        n_con_pt += 1
         if "rocio" in mapa:
             td = _flotante(fila.get(mapa["rocio"]))
         else:
@@ -539,6 +588,18 @@ def leer_csv_globo(texto: str, estacion: str = "globo propio",
         ))
 
     if len(filas) < 5:
+        # Caso concreto del CanSat con BMP180: la columna de humedad existe
+        # pero viene vacia en todas las filas, porque ese sensor no la mide.
+        # Sin ese mensaje el error decia "0 filas utiles" y mandaba a buscar
+        # el problema en el lugar equivocado.
+        if n_con_pt >= 5:
+            raise ErrorFuente(
+                "el CSV trae {} filas con presion y temperatura, pero ninguna "
+                "con humedad ni rocio utilizables. Sin humedad no se puede "
+                "calcular rocio, agua precipitable, LCL ni CAPE: el sensor "
+                "tiene que medirla (el BMP180 no lo hace, el BME280 si)."
+                .format(n_con_pt)
+            )
         raise ErrorFuente(
             "el CSV tiene {} filas utiles; se necesitan al menos 5".format(len(filas))
         )
@@ -606,6 +667,118 @@ COEFICIENTES_PROBIT_PROVISIONALES = {
     "pwat_mm": 0.55,
     "cin_j_kg": -0.30,
 }
+
+
+def evaluar_cobertura_vertical(indices: dict) -> dict:
+    """Que indices son confiables segun hasta donde llego el perfil.
+
+    Un globo cautivo a 300 m y una radiosonda a 20 km producen los dos un
+    perfil valido, y de uno se puede calcular CAPE y del otro no. Sin esta
+    funcion, el CAPE truncado de un perfil corto sale con la misma pinta que
+    el de un perfil completo, y eso es justo el tipo de dato que lleva a una
+    conclusion equivocada con cara de medicion.
+
+    Devuelve por indice si es confiable, mas el aviso en lenguaje claro.
+    """
+    tope = indices.get("tope_hpa")
+    if tope is None or not np.isfinite(tope):
+        return {"tope_hpa": None, "confiables": {}, "avisos": [],
+                "vuelo": "desconocido"}
+    tope = float(tope)
+
+    confiables = {
+        nombre: tope <= requerido
+        for nombre, requerido in TOPE_REQUERIDO_HPA.items()
+        if nombre != "cape_parcial"
+    }
+    # El LCL no se juzga con un umbral fijo sino con el LCL calculado: si el
+    # perfil pasa de ese nivel, el dato esta dentro y es valido. En clima
+    # tropical humedo el LCL anda por 900-950 hPa, asi que hasta un vuelo de
+    # capa limite lo alcanza, y un umbral fijo de 800 hPa lo descartaba mal.
+    lcl = indices.get("lcl_hpa")
+    if lcl is not None and np.isfinite(lcl):
+        confiables["lcl"] = bool(tope <= float(lcl))
+
+    if tope <= 200.0:
+        vuelo = "radiosonda completa"
+    elif tope <= 400.0:
+        vuelo = "radiosonda parcial"
+    elif tope <= 700.0:
+        vuelo = "perfil de troposfera baja"
+    else:
+        vuelo = "capa limite (globo cautivo)"
+
+    avisos = []
+    if not confiables.get("cape_j_kg", False):
+        if tope <= TOPE_REQUERIDO_HPA["cape_parcial"]:
+            avisos.append({
+                "indice": "cape_j_kg",
+                "gravedad": "parcial",
+                "mensaje": (
+                    "el perfil termina a {:.0f} hPa y el nivel de equilibrio "
+                    "tropical esta entre 150 y 200 hPa: el CAPE esta truncado "
+                    "y subestima la energia disponible. Es el caso tipico del "
+                    "BME280, que especifica presion hasta 300 hPa."
+                ).format(tope),
+            })
+        else:
+            avisos.append({
+                "indice": "cape_j_kg",
+                "gravedad": "no usable",
+                "mensaje": (
+                    "el perfil termina a {:.0f} hPa: el CAPE no se puede "
+                    "calcular de forma util. Hace falta un sensor de presion "
+                    "que llegue debajo de 200 hPa (el BME280 corta en 300)."
+                ).format(tope),
+            })
+
+    if not confiables.get("pwat", False):
+        fraccion = _fraccion_pwat_bajo(tope)
+        avisos.append({
+            "indice": "pwat_mm",
+            "gravedad": "parcial",
+            "mensaje": (
+                "el perfil cubre cerca del {:.0%} del agua de la columna "
+                "(termina a {:.0f} hPa): el PWAT es un piso, no el total."
+            ).format(fraccion, tope),
+        })
+
+    for nombre in ("indice_k", "total_totals"):
+        if not confiables.get(nombre, False):
+            avisos.append({
+                "indice": nombre,
+                "gravedad": "no usable",
+                "mensaje": ("necesita el nivel de 500 hPa y el perfil termina "
+                            "a {:.0f} hPa.").format(tope),
+            })
+
+    return {
+        "tope_hpa": round(tope, 1),
+        "tope_km_aprox": round(_altura_aproximada_de(tope), 1),
+        "vuelo": vuelo,
+        "confiables": confiables,
+        "avisos": avisos,
+    }
+
+
+def _fraccion_pwat_bajo(presion_hpa: float) -> float:
+    """Fraccion del agua de la columna que queda por debajo de ese nivel.
+
+    np.interp exige x creciente, y `niveles` ordenado de menor a mayor presion
+    ya trae su fraccion correspondiente en el mismo orden: a 200 hPa queda el
+    99.5% del agua debajo, y a 850 hPa solo el 60%. No hay que invertir nada
+    (la primera version lo invirtio y daba 100% de cobertura para un perfil
+    que terminaba a 850 hPa, o sea lo contrario de la verdad).
+    """
+    niveles = sorted(FRACCION_PWAT_BAJO)
+    fracciones = [FRACCION_PWAT_BAJO[n] for n in niveles]
+    return float(np.interp(presion_hpa, niveles, fracciones))
+
+
+def _altura_aproximada_de(presion_hpa: float) -> float:
+    """Altura en km por la atmosfera estandar. Solo para mostrar al usuario."""
+    p = max(1e-3, float(presion_hpa))
+    return 44.3308 * (1.0 - (p / 1013.25) ** 0.190263)
 
 
 def validar_indices(indices: dict) -> list:
@@ -677,6 +850,11 @@ def media_campo_latente(indices: dict, coeficientes=None, referencia=None,
         mu += aporte
     mu_acotada = float(np.clip(mu, -tope, tope))
     avisos = validar_indices(indices)
+    cobertura = evaluar_cobertura_vertical(indices)
+    # El CAPE es el indice que mas pesa en mu. Si viene truncado por un perfil
+    # corto, mu sale sesgada hacia abajo y hay que decirlo: una mu baja por
+    # falta de sensor se ve igual que una mu baja por atmosfera estable.
+    cape_truncado = not cobertura["confiables"].get("cape_j_kg", True)
     return {
         "mu": round(mu_acotada, 4),
         "mu_sin_acotar": round(mu, 4),
@@ -686,6 +864,13 @@ def media_campo_latente(indices: dict, coeficientes=None, referencia=None,
         "coeficientes_provisionales": coeficientes is COEFICIENTES_PROBIT_PROVISIONALES,
         "avisos": avisos,
         "confiable": not avisos,
+        "cobertura_vertical": cobertura,
+        "cape_truncado": bool(cape_truncado),
+        "nota_cobertura": (
+            "el CAPE esta truncado por un perfil que termina a {:.0f} hPa, "
+            "asi que mu subestima la inestabilidad".format(cobertura["tope_hpa"])
+            if cape_truncado and cobertura["tope_hpa"] else None
+        ),
     }
 
 

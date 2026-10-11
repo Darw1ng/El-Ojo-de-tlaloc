@@ -382,3 +382,194 @@ def test_el_probit_valida_entradas():
         calibrar_probit(indices, [0] * 39)
     with pytest.raises(ValueError, match="binaria"):
         calibrar_probit(indices, [0.5] * 40)
+
+
+# --- cobertura vertical: hasta donde llego el globo -----------------------
+
+
+def _csv_hasta(tope_hpa):
+    base = [(1008, 29.5, 78), (1000, 28.9, 80), (950, 25.1, 85),
+            (900, 21.8, 88), (850, 18.2, 84), (800, 14.9, 75),
+            (700, 8.1, 60), (600, 1.2, 45), (500, -7.5, 35),
+            (400, -18.9, 30), (300, -34.2, 25), (200, -54.1, 20)]
+    filas = [f for f in base if f[0] >= tope_hpa]
+    if len(filas) < 5:
+        filas = base[:5]
+    return ("presion_hpa,temp_c,humedad_rel\n"
+            + "\n".join("{:g},{:g},{:g}".format(*f) for f in filas) + "\n")
+
+
+def test_un_perfil_completo_no_tiene_avisos_de_cobertura():
+    from ojo_tlaloc.fuentes.sondeo import evaluar_cobertura_vertical
+
+    p = leer_csv_globo(_csv_hasta(200))
+    c = evaluar_cobertura_vertical(p.indices)
+    assert c["vuelo"] == "radiosonda completa"
+    assert c["avisos"] == []
+    assert all(c["confiables"].values())
+
+
+def test_el_bme280_trunca_el_cape_y_se_avisa():
+    """El BME280 especifica presion de 300 a 1100 hPa, o sea corta cerca de
+    9 km. El nivel de equilibrio tropical esta entre 150 y 200 hPa, asi que el
+    CAPE sale truncado. Sin aviso, ese numero parece un dato bueno."""
+    from ojo_tlaloc.fuentes.sondeo import evaluar_cobertura_vertical
+
+    c = evaluar_cobertura_vertical(leer_csv_globo(_csv_hasta(300)).indices)
+    assert c["confiables"]["cape_j_kg"] is False
+    assert c["confiables"]["pwat"] is True       # el agua si esta casi toda
+    avisos = {a["indice"]: a for a in c["avisos"]}
+    assert "cape_j_kg" in avisos
+    assert avisos["cape_j_kg"]["gravedad"] == "parcial"
+    assert "BME280" in avisos["cape_j_kg"]["mensaje"]
+
+
+def test_el_cape_medido_cae_al_truncar_el_perfil():
+    """La misma atmosfera, medida hasta distinta altura, da CAPE muy distinto.
+    Es la razon de que el sensor importe mas que el microcontrolador."""
+    capes = [leer_csv_globo(_csv_hasta(t)).indices["cape_j_kg"]
+             for t in (200, 300, 500)]
+    assert capes[0] > capes[1] > capes[2]
+    assert capes[1] < 0.8 * capes[0]      # 300 hPa pierde mas del 20%
+    assert capes[2] < 0.4 * capes[0]      # 500 hPa pierde mas del 60%
+
+
+def test_un_globo_cautivo_no_pretende_dar_cape():
+    from ojo_tlaloc.fuentes.sondeo import evaluar_cobertura_vertical
+
+    c = evaluar_cobertura_vertical(leer_csv_globo(_csv_hasta(900)).indices)
+    assert c["vuelo"] == "capa limite (globo cautivo)"
+    assert c["confiables"]["cape_j_kg"] is False
+    assert c["confiables"]["indice_k"] is False
+    assert c["confiables"]["lcl"] is True     # el LCL si esta en capa baja
+    indices_avisados = {a["indice"] for a in c["avisos"]}
+    assert {"cape_j_kg", "indice_k", "total_totals", "pwat_mm"} <= indices_avisados
+
+
+def test_la_fraccion_de_pwat_cubierta_baja_con_el_tope():
+    """Bug que tuvo esta funcion: invertia el array al interpolar y decia que
+    un perfil terminado a 850 hPa cubria el 100% del agua, o sea lo contrario
+    de la verdad."""
+    from ojo_tlaloc.fuentes.sondeo import _fraccion_pwat_bajo
+
+    assert _fraccion_pwat_bajo(850.0) == pytest.approx(0.60, abs=0.02)
+    assert _fraccion_pwat_bajo(500.0) == pytest.approx(0.92, abs=0.02)
+    assert _fraccion_pwat_bajo(200.0) == pytest.approx(0.995, abs=0.02)
+    # Monotona: mas alto el tope (menor presion), mas agua cubierta.
+    valores = [_fraccion_pwat_bajo(p) for p in (850, 700, 500, 300, 200)]
+    assert valores == sorted(valores)
+
+
+def test_mu_declara_cuando_el_cape_viene_truncado():
+    """Una mu baja por falta de sensor se ve igual que una mu baja por
+    atmosfera estable. Hay que poder distinguirlas."""
+    completo = media_campo_latente(leer_csv_globo(_csv_hasta(200)).indices)
+    truncado = media_campo_latente(leer_csv_globo(_csv_hasta(500)).indices)
+    assert completo["cape_truncado"] is False
+    assert completo["nota_cobertura"] is None
+    assert truncado["cape_truncado"] is True
+    assert "truncado" in truncado["nota_cobertura"]
+    # Y la mu truncada subestima la inestabilidad.
+    assert truncado["mu"] < completo["mu"]
+
+
+def test_la_altura_aproximada_del_tope_es_razonable():
+    from ojo_tlaloc.fuentes.sondeo import _altura_aproximada_de
+
+    # Atmosfera estandar: 500 hPa ~ 5.5 km, 200 hPa ~ 11.8 km.
+    assert _altura_aproximada_de(1013.25) == pytest.approx(0.0, abs=0.1)
+    assert _altura_aproximada_de(500.0) == pytest.approx(5.5, abs=0.4)
+    assert _altura_aproximada_de(200.0) == pytest.approx(11.8, abs=0.6)
+
+
+def test_el_resumen_del_perfil_incluye_la_cobertura(perfil):
+    r = perfil.resumen()
+    assert "cobertura_vertical" in r
+    assert r["cobertura_vertical"]["tope_km_aprox"] > 5.0
+
+
+# --- integracion con el firmware del CanSat -------------------------------
+#
+# Lo que escribe firmware/estacion_tierra/estacion_tierra.ino por el puerto
+# serie tiene que entrar a este parser sin tocar nada. Si alguien cambia el
+# formato de un lado, estas pruebas lo cazan.
+
+CSV_ESTACION = """# El Ojo de Tlaloc - estacion de tierra
+# columnas compatibles con leer_csv_globo()
+presion_hpa,temp_c,humedad_rel,altura_m
+1012.40,29.85,76.2,8.3
+1011.90,29.70,76.8,12.4
+1008.20,29.10,78.1,43.1
+1002.60,28.40,79.5,90.2
+996.10,27.60,81.0,145.8
+# sin senal  recibidos=5  perdidos=0
+"""
+
+
+def test_el_csv_de_la_estacion_de_tierra_se_lee():
+    p = leer_sondeo(CSV_ESTACION)
+    assert p.presion_hpa.size == 5
+    assert p.es_propio is True
+    assert p.presion_hpa[0] == pytest.approx(1012.40)
+    assert p.temperatura_c[0] == pytest.approx(29.85)
+    # El rocio sale de la humedad relativa: 29.85 C con 76.2% da ~25 C.
+    assert p.rocio_c[0] == pytest.approx(25.2, abs=0.5)
+
+
+def test_los_comentarios_del_firmware_no_rompen_el_parser():
+    """El firmware anota con '#' que sensor detecto y cuantos paquetes se
+    perdieron. Documentar el vuelo dentro del archivo es buena practica; el
+    que tiene que ser tolerante es el lector. Antes tomaba el primer
+    comentario como encabezado de columnas y fallaba."""
+    assert leer_sondeo(CSV_ESTACION).presion_hpa.size == 5
+    con_mas = CSV_ESTACION.replace(
+        "1008.20,29.10,78.1,43.1",
+        "# sensor: BME280\n1008.20,29.10,78.1,43.1\n// otro estilo de comentario")
+    assert leer_csv_globo(con_mas).presion_hpa.size == 5
+
+
+def test_sin_humedad_el_error_dice_que_falta_el_sensor():
+    """Caso real: si vuelan con BMP180, la columna de humedad existe pero va
+    vacia. El mensaje tiene que mandar a cambiar el sensor, no a buscar un
+    problema de formato."""
+    sin_humedad = CSV_ESTACION
+    for v in ("76.2", "76.8", "78.1", "79.5", "81.0"):
+        sin_humedad = sin_humedad.replace("," + v + ",", ",,")
+    with pytest.raises(ErrorFuente) as exc:
+        leer_csv_globo(sin_humedad)
+    mensaje = str(exc.value)
+    assert "humedad" in mensaje
+    assert "BME280" in mensaje
+    assert "5 filas con presion y temperatura" in mensaje
+
+
+def test_un_vuelo_de_cohete_de_agua_se_clasifica_como_capa_limite():
+    """Un cohete de agua llega a decenas de metros. El sistema tiene que
+    decir que con eso no hay CAPE, en lugar de entregar un numero truncado
+    con cara de medicion."""
+    from ojo_tlaloc.fuentes.sondeo import evaluar_cobertura_vertical
+
+    p = leer_sondeo(CSV_ESTACION)
+    c = evaluar_cobertura_vertical(p.indices)
+    assert c["vuelo"] == "capa limite (globo cautivo)"
+    assert c["confiables"]["cape_j_kg"] is False
+    assert {"cape_j_kg", "indice_k", "total_totals"} <= {
+        a["indice"] for a in c["avisos"]}
+
+
+def test_el_pwat_de_un_vuelo_bajo_es_chico_y_se_declara_parcial():
+    """Solo mide el agua de los primeros metros: el numero es un piso, no el
+    agua de la columna, y hay que decirlo."""
+    from ojo_tlaloc.fuentes.sondeo import evaluar_cobertura_vertical
+
+    p = leer_sondeo(CSV_ESTACION)
+    assert p.indices["pwat_mm"] < 10.0
+    avisos = {a["indice"]: a for a in
+              evaluar_cobertura_vertical(p.indices)["avisos"]}
+    assert "pwat_mm" in avisos
+    assert "piso" in avisos["pwat_mm"]["mensaje"]
+
+
+def test_el_csv_vacio_o_solo_comentarios_falla_claro():
+    with pytest.raises(ErrorFuente, match="ninguna linea de datos"):
+        leer_csv_globo("# solo comentarios\n# y nada mas\n")
