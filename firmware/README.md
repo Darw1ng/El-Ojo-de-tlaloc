@@ -160,3 +160,65 @@ Cambia `COM3`/`COM4` por los puertos que aparezcan en `arduino-cli board list`.
 4. **Escaleras.** Sube y baja dos pisos con el CanSat encendido: la altitud
    tiene que moverse unos 3 m por piso. Es la verificación más rápida de que
    el barómetro está bien.
+
+---
+
+## Todavía no se sabe qué lo va a sostener
+
+Mientras no esté decidido si va en globo cautivo, globo libre, dron o cohete
+con paracaídas, el firmware **no fuerza la decisión**: mira si la presión está
+cambiando y se ajusta solo.
+
+| Estado | Ritmo | Por qué |
+|---|---|---|
+| sube o baja | 1 muestra cada **250 ms** | es un perfil, cada muestra es una altura distinta: aquí vale gastar batería |
+| quieto a altura fija | 1 muestra cada **2 s** | es una serie en el tiempo; 4 muestras por segundo del mismo punto no agregan información, sólo vacían la pila |
+
+El umbral son 0.08 hPa entre muestras (menos de un metro). Bastan ocho
+muestras seguidas sin movimiento para bajar el ritmo, pero **una sola** con
+movimiento para volver al rápido: es mejor desperdiciar unas muestras que
+perderse el único ascenso del vuelo.
+
+Así el mismo código sirve para los cuatro escenarios, y el backend clasifica
+solo lo que recibió (`clasificar_registro()` distingue perfil de serie
+estacionaria). Se puede volar sin haber decidido nada.
+
+### Números para cuando toque decidir
+
+**Cuánto helio hace falta.** El helio levanta ~1.05 g por litro al nivel del
+mar. Hay que sumar la masa del globo mismo (uno de látex de 90 cm pesa ~100 g):
+
+| Carga útil | Sustentación necesaria | Helio | Diámetro del globo |
+|---|---|---|---|
+| 150 g | ~250 g | 240 L | ~77 cm |
+| 250 g | ~350 g | 333 L | ~86 cm |
+| 400 g | ~500 g | 476 L | ~97 cm |
+
+Un CanSat con Arduino UNO + batería 9 V + PCB + estructura PLA anda por los
+200–300 g, así que el globo sale de alrededor de **90 cm de diámetro**. Y eso
+es sólo para flotar: para que **suba** hace falta sustentación de sobra, por
+lo general 20–30% más.
+
+**Cuánto dura la batería.** Arduino UNO consume ~45 mA y el nRF24L01+PA+LNA
+llega a ~115 mA mientras transmite, aunque sea por milisegundos:
+
+| Ritmo | Consumo medio aprox. | Con 500 mAh |
+|---|---|---|
+| rápido (250 ms) | ~70 mA | 5–7 h |
+| lento (2 s) | ~50 mA | 8–10 h |
+
+Son estimaciones de catálogo, y las baterías de 9 V recargables suelen rendir
+menos de lo que dice la etiqueta. **Hay que medirlo**: el firmware reporta el
+voltaje de batería en cada paquete justamente para eso. Déjenlo corriendo en
+una mesa y vean cuánto aguanta antes de confiar en un número.
+
+Si al final hace falta media jornada o más, ahí sí conviene replantear el
+microcontrolador antes de comprar nada: el UNO no sabe dormir bien y su
+regulador lineal desperdicia buena parte de los 9 V en calor.
+
+### Lo que hay que añadir sí o sí si el vuelo es libre
+
+- **GPS** (NEO-6M o similar): sin él no se sabe dónde cayó. Y da la altura
+  real, que la barométrica no es.
+- **Registro en tarjeta SD**: si se pierde el enlace de radio, el vuelo se
+  salva igual. Hoy los datos sólo existen si llegan por el aire.

@@ -53,9 +53,34 @@ const float TERMISTOR_R_SERIE     = 10000.0;  // el resistor de 10k 1%
 // Si no hay divisor, deja FACTOR en 1.0 y no conectes 9 V al ADC: lo quema.
 const float BATERIA_FACTOR        = 1.0;
 
-const unsigned long PERIODO_MS    = 500;      // una muestra cada medio segundo
 const uint8_t  CANAL_RF           = 76;       // lejos del wifi de 2.4 GHz
 const float    PRESION_NIVEL_MAR  = 1013.25;  // hPa, referencia de altitud
+
+/*
+ * MUESTREO ADAPTATIVO
+ *
+ * Todavia no esta decidido que va a sostener la capsula ni cuanto tiempo
+ * tiene que aguantar. En vez de elegir un periodo fijo y equivocarse, el
+ * firmware mira si la presion esta cambiando y se ajusta solo:
+ *
+ *   se esta MOVIENDO (sube o baja)  -> muestreo rapido: es un PERFIL y cada
+ *                                      muestra es una altura distinta, asi
+ *                                      que aqui es donde hay que gastar
+ *                                      bateria y ancho de banda
+ *   esta QUIETO a altura fija       -> muestreo lento: es una serie en el
+ *                                      tiempo, y 10 muestras por segundo del
+ *                                      mismo punto no agregan informacion,
+ *                                      solo vacian la pila
+ *
+ * Con esto el mismo codigo sirve para globo cautivo, globo libre, dron o
+ * cohete con paracaidas, y en todos aprovecha la bateria donde importa.
+ * El umbral son 0.08 hPa entre muestras, que a nivel del mar es menos de un
+ * metro: suficiente para distinguir movimiento real del ruido del sensor.
+ */
+const unsigned long PERIODO_RAPIDO_MS = 250;   // ascenso o descenso
+const unsigned long PERIODO_LENTO_MS  = 2000;  // estacionario
+const float UMBRAL_MOVIMIENTO_HPA     = 0.08;
+const uint8_t MUESTRAS_PARA_QUIETO    = 8;     // seguidas sin moverse
 
 byte direcciones[][6] = {"1Node", "2Node"};
 
@@ -85,13 +110,21 @@ struct Telemetria {
   float voltaje_v;
   float segundos;
   uint16_t contador;
-  uint8_t banderas;       // bit 0: hay humedad, bit 1: barometro vivo
+  uint8_t banderas;       // b0 humedad, b1 barometro, b2 en movimiento
 };
 
 Telemetria paquete;
 uint16_t contador = 0;
 
+// Estado del muestreo adaptativo.
+float presion_anterior = NAN;
+uint8_t muestras_quieto = 0;
+bool en_movimiento = true;    // se arranca rapido hasta saber que pasa
+unsigned long periodo_ms = PERIODO_RAPIDO_MS;
+
 // --- sensores --------------------------------------------------------------
+
+void actualizar_ritmo();   // prototipo: se usa antes de definirse
 
 /*
  * Temperatura del termistor por la ecuacion beta.
@@ -170,6 +203,36 @@ void leer_sensores() {
   paquete.voltaje_v   = leer_bateria();
   paquete.segundos    = millis() / 1000.0;
   paquete.contador    = contador++;
+
+  actualizar_ritmo();
+  if (en_movimiento) paquete.banderas |= 0x04;
+}
+
+/*
+ * Decide si la capsula se esta moviendo en la vertical y ajusta el ritmo.
+ *
+ * Se exigen varias muestras seguidas sin movimiento antes de bajar el ritmo,
+ * para que una racha de viento o un poco de ruido no lo haga oscilar. En
+ * cambio basta UNA muestra con movimiento para volver al ritmo rapido: es
+ * mejor desperdiciar unas muestras que perderse el unico ascenso del vuelo.
+ */
+void actualizar_ritmo() {
+  if (isnan(paquete.presion_hpa)) return;
+
+  if (!isnan(presion_anterior)) {
+    float cambio = fabs(paquete.presion_hpa - presion_anterior);
+    if (cambio >= UMBRAL_MOVIMIENTO_HPA) {
+      muestras_quieto = 0;
+      en_movimiento = true;
+    } else if (muestras_quieto < 255) {
+      muestras_quieto++;
+    }
+    if (muestras_quieto >= MUESTRAS_PARA_QUIETO) {
+      en_movimiento = false;
+    }
+  }
+  presion_anterior = paquete.presion_hpa;
+  periodo_ms = en_movimiento ? PERIODO_RAPIDO_MS : PERIODO_LENTO_MS;
 }
 
 // --- programa --------------------------------------------------------------
@@ -203,7 +266,7 @@ void setup() {
 void loop() {
   static unsigned long anterior = 0;
   unsigned long ahora = millis();
-  if (ahora - anterior < PERIODO_MS) {
+  if (ahora - anterior < periodo_ms) {
     return;
   }
   anterior = ahora;
@@ -223,5 +286,7 @@ void loop() {
   if (isnan(paquete.humedad_rel)) Serial.print(F("--"));
   else Serial.print(paquete.humedad_rel, 1);
   Serial.print(F("  alt=")); Serial.print(paquete.altitud_m, 1);
-  Serial.print(F(" m  rf=")); Serial.println(enviado ? F("ok") : F("FALLO"));
+  Serial.print(F(" m  ")); Serial.print(en_movimiento ? F("[mov]") : F("[fijo]"));
+  Serial.print(F("  bat=")); Serial.print(paquete.voltaje_v, 2);
+  Serial.print(F(" V  rf=")); Serial.println(enviado ? F("ok") : F("FALLO"));
 }
