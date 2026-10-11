@@ -187,22 +187,202 @@ dónde sí está el valor: en el contraste que mete el estado del suelo.
 
 ---
 
+## 10-oct-2026 — Sesión 2: de modelo a plataforma de fusión
+
+Encargo: *"¿no puedes hacer que se enriquezca de todos los ángulos, con la
+info que proporciona StreetMap, por lo de la NASA y datos recolectados en
+bruto? ¿No podrías unir todo eso y hacer más que sólo un modelo predictivo?"*
+
+Sí, y la pieza que lo permite ya estaba hecha: **la malla hexagonal es el
+índice espacial común**. Todo lo demás se construyó encima sin tocar el
+comportamiento del modelo (las 153 pruebas de la sesión 1 siguieron verdes
+todo el tiempo).
+
+### 13. Procedencia antes que datos
+
+Primero el esqueleto: cada capa que entra al sistema trae fuente, nivel
+(`observado` / `reanalisis` / `derivado` / `sintetico`), resolución, cadencia,
+incertidumbre, licencia y atribución. No es burocracia
+([adr/0005](adr/0005-procedencia-pegada-al-dato.md)): sin eso, nuestra
+climatología inventada y una observación de NISAR se ven iguales en el mapa, y
+la atribución que exige la ODbL de OSM se pierde en la primera
+transformación.
+
+### 14. OpenStreetMap, con datos reales
+
+**Tropiezo 1 — el 406.** Overpass rechaza peticiones sin `User-Agent`
+reconocible. Con `curl` funcionaba y desde Python no.
+
+**Tropiezo 2 — el diagnóstico engañoso.** Mi cliente agotaba 3 reintentos en
+el servidor principal antes de probar el espejo, y sólo reportaba el último
+error. El principal daba `504` por tasa y el espejo respondía bien, pero el
+mensaje culpaba al espejo. Se rediseñó: **una pasada por todos los espejos
+antes de insistir en ninguno**, acumulando los errores de todos.
+
+**Bug conceptual serio.** La primera versión promediaba la impermeabilidad
+*sólo entre los puntos con uso de suelo mapeado*. Resultado: una celda rural
+con un polígono industrial diminuto salía al **85% de impermeable, con 0
+edificios y casi sin vialidad**, por encima del puerto de Veracruz. Lo que se
+necesita es la **fracción de área** de toda la celda, no el promedio
+condicionado. Corregido, el ranking quedó geográficamente correcto: la celda
+más impermeable es `OT0.0.0`, que es el centro del enlace de OSM.
+
+**Problema de cobertura, resuelto sin inventar.** Medido: 5 603 edificios para
+una zona metropolitana de ~900 mil habitantes, y 10% del uso de suelo mapeado
+en la celda del puerto. Contar edificios daba **1.9%** de ocupación en el
+centro de la ciudad, imposible. La vialidad sí está bien mapeada (32 422
+vías), así que se agregó un **proxy calibrado por densidad vial**, declarado
+como proxy con su incertidumbre, y la impermeabilidad final toma el máximo de
+las tres vías. Resultado: puerto 69%, zona urbana 48–65%.
+
+### 15. NASA POWER, y dos sesgos que contradijeron mis supuestos
+
+Decisión: **no usar el endpoint de climatología** (doce medias mensuales no
+permiten separar frecuencia de intensidad) sino bajar **21 años de datos
+diarios** y calcular aquí las seis series.
+
+| Lo que confirmó | Lo que contradijo |
+|---|---|
+| acumulado: 1 706 mm/año contra mis 1 656 sintéticos | **195 días de lluvia/año** contra mis 117 |
+| patrón estacional jun–oct | el **pico de temperatura está en mayo, no en agosto** |
+
+El primero es el **sesgo de llovizna** de los reanálisis. Se corrigió
+calibrando el umbral de día húmedo a 3.7 mm, **sin recortar el acumulado**: la
+masa de agua es lo que el reanálisis mide bien, la distribución en días es lo
+que se corrige.
+
+El segundo era un error mío: en el trópico húmedo la nubosidad de la temporada
+de lluvias baja la máxima, así que el pico es antes. POWER tenía razón.
+
+**Tercer hallazgo.** La forma de Weibull por el método de momentos daba
+k = 1.0–1.9, muy por encima del 0.7–0.9 de la literatura. Dos causas: el
+truncamiento por el umbral reduce el coeficiente de variación, y MERRA-2
+suaviza los máximos. Se cambió a **ajuste por dos cuantiles**, que tiene
+solución cerrada y preserva la cola alta —que es la parte con la que se
+decide. Bajó a 0.99–1.57; lo que queda es el suavizado del reanálisis, y se
+dejó **declarado como sesgo** con su corrección (IMERG).
+
+De ahí salió un patrón que vale la pena: **las fuentes declaran sus propios
+sesgos** en un campo `advertencias` que viaja hasta la API.
+
+### 16. El globo sonda
+
+La pieza con más física y el aporte conceptual más grande. Se implementaron
+CAPE, CIN, agua precipitable, LCL y los índices K y Total Totals, verificados
+contra tablas termodinámicas (es(T) al 0.01 hPa, rocío 13.87 contra 13.9 de
+tabla, CAPE de atmósfera isoterma ≈ 0).
+
+Y entran al modelo por el lugar correcto: **la media del campo latente**. Como
+`P(lluvia) = Φ(μ − τ)`, ajustar μ desde los índices **es una regresión
+probit**. La calibración por máxima verosimilitud está implementada y
+verificada en los dos sentidos: recupera coeficientes conocidos a ±0.12 **y no
+encuentra señal donde no hay**.
+
+**Dos correcciones al vuelo:**
+
+- El CAPE saturaba μ por sí solo (3 000 J/kg daba z = 3.7). Se normaliza por
+  su **raíz**, que es lo físicamente lineal: `w = √(2·CAPE)`.
+- Los perfiles irreales pasaban sin aviso. Se agregó `validar_indices()` con
+  rangos físicos; un perfil con PWAT de 340 mm queda marcado como no
+  confiable y el endpoint de fusión lo **descarta en lugar de usarlo**.
+
+**Dos bugs en el parser de Wyoming**, cazados por los tests: usé mal los
+índices de columna (el formato es de 7 caracteres exactos, y DRCT/SKNT están
+en 42–49 y 49–56, no donde los puse) y descartaba líneas de sondeos recortados
+por un filtro de longitud demasiado estricto.
+
+**Efecto medido:** sin sondeo 73% de días con lluvia y 111 mm en 10 días; con
+μ = +1.42, 98% y **361 mm**. Con μ = −1.42, 18% y 10 mm.
+
+### 17. El escurrimiento con impermeabilidad real
+
+Se cambió a área impermeable directamente conectada,
+`escurr = imperm·P + (1−imperm)·P·S^β`, retrocompatible (con `imperm = 0` es
+el comportamiento anterior).
+
+Primera medición: el efecto era de **+0.6%** en celdas urbanas. Pareció un
+bug y no lo era: en septiembre el suelo está saturado y ya escurría el 80%. Al
+medir por estado del suelo salió el hallazgo:
+
+| Suelo | Cambio |
+|---|---|
+| seco (S = 0.15) | **+565%** |
+| medio (S = 0.45) | +92% |
+| saturado (S = 0.85) | +10% |
+
+**La ciudad amplifica la tormenta sólo cuando el suelo podría absorber.** Y
+hay un efecto que suele olvidarse: en zona impermeable el suelo tampoco se
+moja (0.72 contra 0.86), porque el agua se va por el drenaje.
+
+### 18. Los productos que no son pronóstico
+
+Con el expediente armado, tres productos más de las mismas capas:
+
+- **exposición** — cruce con OSM: *"733 equipamientos críticos y 5 530
+  edificios en 126 celdas"*, y por celda el desglose (`OT0.1.0`: 69 escuelas,
+  14 hospitales, 24 universidades). Eso es la diferencia entre un mapa y una
+  decisión.
+- **aptitud de terreno** — multicriterio con pesos explícitos. La primera
+  versión **premiaba las celdas más densas del puerto**, que es justo donde no
+  hay terreno que comprar; se agregó el criterio `disponible`. Y lleva
+  advertencias en la propia respuesta de la API: no sustituye levantamiento
+  topográfico ni mecánica de suelos.
+- **ventanas de obra** — siete actividades con sus umbrales y su razón.
+  *Montaje con grúa se omite a propósito*: su límite real es el viento a
+  altura de pluma y el modelo no genera viento. Se declara y se omite en lugar
+  de contestar con datos que no existen.
+
+### 19. Pruebas: 153 → 306
+
+Las nuevas incluyen varias que cazan bugs concretos que ya ocurrieron:
+
+- `test_la_celda_del_puerto_es_la_mas_urbana` falla si la agregación espacial
+  se rompe otra vez;
+- `test_el_truncamiento_sesga_los_momentos_y_no_los_cuantiles` protege la
+  decisión de ajustar la Weibull por cuantiles;
+- `test_el_probit_no_encuentra_senal_donde_no_hay` es la mitad que suele
+  faltar en una prueba de calibración;
+- `test_la_aptitud_advierte_que_no_sustituye_un_topografo` trata la
+  advertencia legal como parte del producto.
+
+Las que necesitan red se **saltan** si no hay caché, en lugar de fallar: un CI
+sin internet no debería reportar rojo, y pegarle a Overpass en cada corrida
+sería abusar de un servicio gratuito.
+
+---
+
 ## Pendientes
 
 En orden de lo que más mueve la aguja:
 
-1. **Granulos reales de NISAR** — descarga por `asf_search`, recorte y
-   *retrieval* de humedad. Los pasos 4 a 7 de la cadena ya están hechos; falta
-   el 1 al 3 ([05-datos-y-nisar](05-datos-y-nisar.md)).
-2. **DEM real** (SRTM 30 m) para quitar el perfil de elevación sintético.
-3. **Normales reales** de CHIRPS / ERA5-Land / CONAGUA — son 12 listas de
-   números, la interfaz ya está.
-4. **Línea de costa real** de Natural Earth u OSM.
-5. **Textura de suelo por celda** (INEGI / SoilGrids) para quitar el sesgo de
-   la conversión volumétrica.
-6. **Un caso histórico** con lluvia observada para medir habilidad de verdad.
-7. **Frontend** — lo hace otra persona; el contrato está en
-   [04-api](04-api.md).
+1. **GPM IMERG** — lluvia observada cada 30 min a 11 km. Cierra el hueco de
+   validación (hoy las métricas son de consistencia interna) y corrige la cola
+   de la Weibull. Requiere cuenta Earthdata.
+2. **Gránulos reales de NISAR (GCOV) + SMAP** — humedad de suelo observada.
+   Los pasos 4 a 7 de la cadena ya están hechos y probados; faltan descarga y
+   *retrieval* ([05-datos-y-nisar](05-datos-y-nisar.md)). SMAP complementa a
+   NISAR: uno da cadencia, el otro detalle.
+3. **DEM real** (SRTM 30 m) para quitar la elevación sintética y volver
+   creíble la pendiente.
+4. **Textura de suelo por celda** (INEGI / SoilGrids) — es el error más grande
+   de la cadena de asimilación.
+5. **Calibrar el probit** con sondeos históricos del SMN y lluvia observada:
+   los coeficientes dejan de ser provisionales.
+6. **InSAR / GUNW** — la capa de hundimiento, el producto más vendible a
+   constructoras y el más defendible técnicamente.
+7. **Línea de costa real** de Natural Earth u OSM.
+8. **Un caso histórico** con lluvia observada para medir habilidad de verdad.
+9. **Frontend** — lo hace otra persona; el contrato está en
+   [04-api](04-api.md) y [07-plataforma-de-fusion](07-plataforma-de-fusion.md).
+
+Decisión tomada sobre el globo: **sondeos públicos primero.** El SMN-CNA lanza
+dos veces al día y Veracruz es una de las estaciones, con archivo histórico en
+NCAR, así que la regresión probit se puede calibrar ya. El globo propio entra
+como fuente en vivo y diferenciador, sin bloquear el modelo ni depender de
+permisos. El parser acepta los dos formatos, así que el hardware no condiciona
+el software. ⚠️ Antes de comprar nada hay que verificar el trámite de la AFAC
+para globos libres no tripulados: la normativa específica no apareció buscando
+y no hay que inventarla.
 
 ## Decisiones que conviene revisar más adelante
 

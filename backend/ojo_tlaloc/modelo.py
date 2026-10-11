@@ -117,6 +117,22 @@ class ParametrosModelo:
     #: como S^beta. beta alto = el suelo seco absorbe casi todo.
     beta_escurrimiento: float = 1.5
 
+    #: Fraccion impermeable por celda (0-1), de OpenStreetMap. Escalar o
+    #: array (n_celdas,). La fraccion impermeable escurre TODA la lluvia sin
+    #: importar como este el suelo, y la permeable escurre segun su
+    #: saturacion:
+    #:
+    #:     escurrimiento = imperm * P  +  (1 - imperm) * P * S^beta
+    #:
+    #: Es el modelo de area impermeable directamente conectada, el estandar de
+    #: hidrologia urbana. Con imperm = 0 se recupera exactamente el
+    #: comportamiento anterior, asi que pasarlo es opcional.
+    #:
+    #: Y tiene un efecto que suele olvidarse: en la zona impermeable el suelo
+    #: tampoco se moja, porque el agua se va por el drenaje antes de
+    #: infiltrarse. Asi que la ciudad escurre mas Y se seca mas.
+    fraccion_impermeable: object = 0.0
+
     #: Dias de calentamiento del balance de agua antes del pronostico. Sirve
     #: para que la humedad inicial del suelo sea consistente con la lluvia
     #: reciente y no un numero puesto a mano.
@@ -257,6 +273,18 @@ class SimuladorEstocastico:
         self.tau_seco = norm_ppf(1.0 - self.clima.p01)
         self.tau_humedo = norm_ppf(1.0 - self.clima.p11)
 
+        # Fraccion impermeable por celda: escalar o array.
+        imp = np.asarray(self.par.fraccion_impermeable, dtype=float)
+        if imp.ndim == 0:
+            imp = np.full(malla.n_celdas, float(imp))
+        elif imp.shape != (malla.n_celdas,):
+            raise ValueError(
+                "fraccion_impermeable debe ser escalar o de largo {}".format(
+                    malla.n_celdas))
+        if np.nanmin(imp) < 0.0 or np.nanmax(imp) > 1.0:
+            raise ValueError("fraccion_impermeable debe estar en [0, 1]")
+        self.fraccion_impermeable = np.nan_to_num(imp, nan=0.0)
+
         # Radiacion extraterrestre por celda y dia juliano, (n, 366). Se
         # precalcula porque solo depende de latitud y fecha.
         self._ra = np.stack(
@@ -274,6 +302,7 @@ class SimuladorEstocastico:
         semilla: int | None = None,
         humedad_inicial=None,
         dias_calentamiento: int | None = None,
+        mu_campo=None,
     ) -> ResultadoSimulacion:
         """Corre el ensamble.
 
@@ -285,6 +314,18 @@ class SimuladorEstocastico:
                             escalar, array (n,) o array (n_miembros, n).
                             Aqui entra el dato asimilado de NISAR.
         dias_calentamiento  None usa el de los parametros
+        mu_campo            media del campo latente de lluvia, en unidades de
+                            normal estandar. Escalar, array (n_celdas,) o
+                            array (n_dias,). Aqui entra el sondeo: con
+                            mu > 0 sube la probabilidad Y la intensidad de
+                            lluvia de todo el dominio de forma coherente.
+                            Ver docs/03-modelo-estocastico.md.
+
+        OJO con mu_campo: con mu distinta de cero el modelo YA NO reproduce la
+        climatologia, y eso es a proposito, porque deja de ser climatologia y
+        pasa a ser pronostico del dia. La consistencia climatologica se
+        recupera solo si mu tiene media cero a lo largo de muchos dias, de lo
+        que se encarga el intercepto del probit cuando se calibra.
         """
         if n_dias < 1:
             raise ValueError("n_dias debe ser al menos 1")
@@ -314,8 +355,12 @@ class SimuladorEstocastico:
         s = self._humedad_inicial(humedad_inicial, m, n)
         anom_t = np.zeros((m, n), dtype=float)
 
-        # Campos latentes iniciales: una muestra del equilibrio estacionario.
-        w = self.campo_lluvia.muestra(rng, m)        # (m, n)
+        # Media del campo latente, por dia y por celda.
+        mu = self._preparar_mu(mu_campo, total, n, calent)
+
+        # Campos latentes iniciales: una muestra del equilibrio estacionario,
+        # centrada en la media del primer dia.
+        w = self.campo_lluvia.muestra(rng, m) + mu[0][None, :]
         wt = self.campo_temp.muestra(rng, m)
 
         phi_ll = self.par.persistencia_campo_lluvia
@@ -336,12 +381,19 @@ class SimuladorEstocastico:
         out_escurr = np.zeros(forma, dtype=np.float32)
         out_et0 = np.zeros(forma, dtype=np.float32)
 
+        mu_ayer = mu[0][None, :]
         for k, fecha in enumerate(fechas_todas):
             mes = fecha.month - 1
             jul = min(fecha.timetuple().tm_yday, 366)
 
-            # 1. campos latentes
-            w = phi_ll * w + innov_ll * self.campo_lluvia.muestra(rng, m)
+            # 1. campos latentes. El AR(1) va sobre la ANOMALIA respecto a la
+            # media, no sobre el campo: asi la media del campo es mu y la
+            # varianza marginal sigue siendo 1, que es lo que mantiene validos
+            # los umbrales de ocurrencia.
+            mu_hoy = mu[k][None, :]
+            w = (mu_hoy + phi_ll * (w - mu_ayer)
+                 + innov_ll * self.campo_lluvia.muestra(rng, m))
+            mu_ayer = mu_hoy
             wt = phi_t * wt + innov_t * self.campo_temp.muestra(rng, m)
 
             # 2. ocurrencia: umbral segun el estado de ayer
@@ -388,7 +440,11 @@ class SimuladorEstocastico:
             # 5. balance de agua
             ra = self._ra[None, :, jul - 1]
             et0 = et0_hargreaves(ra, tmax, tmin)
-            escurr = lluvia * np.power(s, self.par.beta_escurrimiento)
+            # Area impermeable directamente conectada: lo pavimentado escurre
+            # todo, lo permeable escurre segun su saturacion.
+            imp = self.fraccion_impermeable[None, :]
+            escurr = lluvia * (imp + (1.0 - imp)
+                               * np.power(s, self.par.beta_escurrimiento))
             infiltra = lluvia - escurr
             et_real = et0 * s
             s = s + (infiltra - et_real) / cap_segura[None, :]
@@ -446,6 +502,41 @@ class SimuladorEstocastico:
         if np.nanmin(s) < 0.0 or np.nanmax(s) > 1.0:
             raise ValueError("la humedad inicial debe estar en [0, 1]")
         return np.where(self.clima.es_tierra[None, :], s, np.nan)
+
+    def _preparar_mu(self, mu_campo, total: int, n: int, calent: int):
+        """Media del campo latente como array (total_dias, n_celdas).
+
+        Acepta escalar, array por celda o array por dia del PRONOSTICO (no del
+        calentamiento). En ese ultimo caso los dias de calentamiento se dejan
+        en cero: el calentamiento sirve para que el suelo llegue a un estado
+        consistente con la climatologia, y meterle la anomalia del dia de hoy
+        lo contaminaria.
+        """
+        if mu_campo is None:
+            return np.zeros((total, n))
+        arr = np.asarray(mu_campo, dtype=float)
+        n_dias = total - calent
+
+        if arr.ndim == 0:
+            mu = np.zeros((total, n))
+            mu[calent:] = float(arr)
+            return mu
+        if arr.shape == (n,):
+            mu = np.zeros((total, n))
+            mu[calent:] = arr[None, :]
+            return mu
+        if arr.shape == (n_dias,):
+            mu = np.zeros((total, n))
+            mu[calent:] = arr[:, None]
+            return mu
+        if arr.shape == (n_dias, n):
+            mu = np.zeros((total, n))
+            mu[calent:] = arr
+            return mu
+        raise ValueError(
+            "mu_campo debe ser escalar, ({},), ({},) o ({}, {}); recibi {}"
+            .format(n, n_dias, n_dias, n, arr.shape)
+        )
 
     def memoria_estimada_mb(self, n_dias: int, n_miembros: int) -> float:
         """MB que va a ocupar el ensamble crudo. Lo usa la API para rechazar

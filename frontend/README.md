@@ -106,3 +106,81 @@ Lo mismo con la climatología: `GET /api/climatologia?mes=0` trae un campo
 Las corridas viven en memoria con tope de 8. Si pides una que ya expiró, la
 respuesta es `404` con el mensaje de volver a llamar `POST /api/pronostico`.
 Hay que manejar ese caso: no asumas que el `id_corrida` vive para siempre.
+
+---
+
+## Plataforma de fusión (etapa 2)
+
+El backend dejó de ser sólo un predictor: ahora funde OpenStreetMap, NASA
+POWER y perfiles de globo sonda en un expediente por hexágono, y de ahí salen
+cinco productos. Lee
+[docs/07-plataforma-de-fusion.md](../docs/07-plataforma-de-fusion.md) para el
+panorama; aquí va lo que necesitas para consumirlo.
+
+### Endpoints nuevos
+
+```
+GET  /api/expediente                    qué capas hay, de dónde vienen, qué falta
+GET  /api/expediente/capa?nombre=...    una capa con su procedencia
+GET  /api/expediente/celda/{id}         TODO lo que se sabe de un hexágono
+GET  /api/expediente/atribuciones       lo que hay que mostrar por licencia
+POST /api/sondeo                        texto del perfil → índices y μ
+POST /api/sondeo/calibrar               estima el probit con históricos
+POST /api/pronostico/fusion             pronóstico con todas las fuentes
+GET  /api/aptitud                       aptitud de terreno por hexágono
+GET  /api/pendiente                     pendiente aproximada
+GET  /api/corrida/{id}/exposicion       quién está en riesgo
+GET  /api/corrida/{id}/ventanas         calendario de obra por actividad
+GET  /api/actividades                   catálogo de actividades y umbrales
+```
+
+### Cuatro reglas que no hay que equivocar
+
+**1. Rotula lo que no es dato.** `GET /api/expediente/atribuciones` devuelve
+`capas_sinteticas`: esas las inventamos nosotros (hoy elevación, tierra/mar,
+distancia a la costa, capacidad de suelo). No pueden verse igual que una
+observación. Cada capa trae `procedencia.nivel`, que es uno de `observado`,
+`reanalisis`, `derivado` o `sintetico`.
+
+**2. Muestra las atribuciones.** La ODbL de OpenStreetMap lo exige y NASA
+POWER lo pide. Vienen listas en `atribuciones`, no es opcional.
+
+**3. Enseña los sesgos que las fuentes declaran.** `GET /api/expediente`
+devuelve `advertencias`: cada una dice qué variable, qué sesgo, el detalle y
+cómo se corrige. Por ejemplo, que la temperatura máxima de POWER sale ~3 °C
+baja porque su celda nativa mezcla mar y tierra. Un tablero que esconde eso es
+peor que uno que no lo sabe.
+
+**4. Las advertencias de aptitud son parte del producto.** `GET /api/aptitud`
+trae un array `advertencias` que dice, entre otras cosas, que **no sustituye
+un levantamiento topográfico ni un estudio de mecánica de suelos**. Si alguien
+decide una nivelación con nuestro número y sale mal, el problema es nuestro.
+Esas líneas van visibles, no en un tooltip.
+
+### Lo más vendible para la interfaz
+
+- **El expediente de la celda.** `GET /api/expediente/celda/OT0.0.0` devuelve
+  todo agrupado por familia (estático, climatológico, observado, derivado) con
+  la fuente de cada dato. Es un panel de detalle que se arma solo.
+- **La exposición.** `celdas_prioritarias` trae, por celda, el desglose de
+  equipamientos: `{"school": 69, "hospital": 14, "university": 24}`. Decir
+  *"60% de probabilidad y hay 14 hospitales"* es otra conversación que decir
+  *"60%"*.
+- **El calendario de obra.** `GET /api/corrida/{id}/ventanas?id_celda=...`
+  devuelve, por actividad, la probabilidad de día trabajable para cada día y
+  los días esperados. Es una tabla directa.
+- **El diagnóstico del sondeo.** `POST /api/sondeo` devuelve
+  `interpretacion` en lenguaje operativo (*"inestabilidad fuerte"*, *"columna
+  húmeda"*, *"sin tapa"*) además de los números. Y `mu_campo_latente.aportes`
+  dice cuánto aportó cada índice, que es lo que permite explicar el pronóstico
+  en vez de sólo mostrarlo.
+
+### Datos de verdad para trabajar sin backend
+
+```bash
+cd backend && python demo_fusion.py
+```
+
+Deja `datos/salida/demo_fusion.json` con el expediente completo, el
+pronóstico, la exposición, la aptitud y las ventanas de obra, todo con datos
+reales de OSM y NASA POWER.

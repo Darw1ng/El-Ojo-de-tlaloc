@@ -74,6 +74,7 @@ class Estado:
         self.simuladores: dict[int, SimuladorEstocastico] = {}
         self.corridas: OrderedDict = OrderedDict()
         self.asimilaciones: OrderedDict = OrderedDict()
+        self.expedientes: dict = {}
 
     def malla(self, nivel: int) -> MallaHexagonal:
         if nivel not in self.mallas:
@@ -93,6 +94,25 @@ class Estado:
                 m, Climatologia.sintetica(m), ParametrosModelo()
             )
         return self.simuladores[nivel]
+
+    def expediente(self, nivel: int, usar_osm: bool = True,
+                   usar_power: bool = True, refrescar: bool = False):
+        """Expediente de fusion, cacheado por (nivel, fuentes).
+
+        Construirlo baja de Overpass y de POWER, asi que se cachea en el
+        proceso; las fuentes ademas cachean en disco. Sin esto, cada peticion
+        le pegaria a dos servicios publicos gratuitos.
+        """
+        from ..expediente import construir_expediente
+
+        clave = (nivel, bool(usar_osm), bool(usar_power))
+        if refrescar or clave not in self.expedientes:
+            malla = self.malla(nivel)
+            self.expedientes[clave] = construir_expediente(
+                malla, clima=self.simulador(nivel).clima,
+                usar_osm=usar_osm, usar_power=usar_power,
+            )
+        return self.expedientes[clave]
 
     def guardar_corrida(self, id_corrida: str, paquete: dict) -> None:
         self.corridas[id_corrida] = paquete
@@ -521,6 +541,11 @@ def crear_app() -> FastAPI:
             "humedad_observada": _lista(obs.valores),
             "humedad_posterior": _lista(np.nanmean(res["ensamble"], axis=0)),
         }
+
+    # Rutas de la plataforma de fusion (expediente, sondeo, analisis).
+    from .rutas_fusion import registrar as registrar_fusion
+
+    registrar_fusion(app, estado)
 
     return app
 
