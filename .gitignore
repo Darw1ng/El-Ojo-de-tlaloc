@@ -26,3 +26,6 @@ datos/salida/*
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Frontend: cache de mosaicos de OSM generada por servir.py
+frontend/.tiles/

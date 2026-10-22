@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>El Ojo de Tláloc</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="vendor/fuentes.css">
+<link rel="stylesheet" href="vendor/leaflet.min.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="progreso" hidden></div>
+
+<aside id="izq">
+  <header class="marca">
+    <img class="ojo" src="logo.png" alt="" width="64" height="64">
+    <div>
+      <h1>El Ojo de Tláloc</h1>
+      <p>Veracruz y Boca del Río · hexágonos de <span id="escala-txt">1:16</span></p>
+    </div>
+  </header>
+
+  <section>
+    <h2>Corrida</h2>
+    <div class="cuadricula">
+      <label>Inicio<input type="date" id="f-fecha" value="2026-09-15"></label>
+      <label>Días<input type="number" id="f-dias" value="14" min="1" max="30"></label>
+      <label>Miembros<input type="number" id="f-miembros" value="200" min="20" max="1000" step="20"></label>
+      <label>Semilla<input type="number" id="f-semilla" value="20261114"></label>
+      <label class="ancho">Resolución
+        <select id="f-nivel">
+          <option value="0">1:16 · 221 celdas</option>
+          <option value="1">1:32 · 825 celdas</option>
+          <option value="2">1:64 · 3 055 celdas</option>
+        </select>
+      </label>
+    </div>
+    <label class="check">
+      <input type="checkbox" id="f-radar">
+      <span>Corregir la humedad inicial con radar <em class="alerta">(dato sintético, no es NISAR)</em></span>
+    </label>
+    <button id="b-correr" class="boton">Calcular pronóstico</button>
+    <div id="resumen" class="resumen" hidden></div>
+    <div id="asim" class="asim" hidden></div>
+  </section>
+
+  <section>
+    <h2>Qué mostrar en el mapa</h2>
+    <div class="segmentos" id="s-modo">
+      <button data-modo="valor" class="on">Valor</button>
+      <button data-modo="prob">Probabilidad</button>
+      <button data-modo="riesgo">Riesgo</button>
+    </div>
+
+    <ul id="l-vars" class="vars"></ul>
+
+    <div id="c-stat" class="bloque">
+      <span class="etq">Estadístico del ensamble</span>
+      <div class="chips" id="s-stat"></div>
+    </div>
+
+    <div id="c-umbral" class="bloque" hidden>
+      <div class="cuadricula">
+        <label>Umbral <small id="u-unidad"></small><input type="number" id="f-umbral" step="any"></label>
+        <label>Ventana
+          <select id="f-ventana">
+            <option value="1">1 día</option>
+            <option value="3" selected>3 días</option>
+            <option value="7">7 días</option>
+          </select>
+        </label>
+      </div>
+      <p class="nota" id="n-modo"></p>
+    </div>
+
+    <div id="leyenda" class="leyenda"></div>
+  </section>
+
+  <section id="s-expo">
+    <h2>Quién está en riesgo</h2>
+    <p class="nota">Cruza el riesgo del día elegido con los edificios y equipamientos de OpenStreetMap. No es “60 %”, es “60 % y hay 14 hospitales”.</p>
+    <button id="b-expo" class="boton claro">Cruzar con OpenStreetMap</button>
+    <div id="expo" class="expo"></div>
+  </section>
+
+  <section class="procedencia">
+    <h2>De dónde sale cada dato</h2>
+    <ul id="proc">
+      <li class="sint"><b>Sintético:</b> elevación, tierra y mar, distancia a la costa y capacidad del suelo.</li>
+      <li class="sint" id="proc-clima"><b>Sintético:</b> climatología base.</li>
+      <li><b>Real:</b> OpenStreetMap (Overpass), NASA POWER y perfil de globo sonda.</li>
+      <li class="pend"><b>Pendiente:</b> NISAR, SMAP y GPM IMERG, faltan credenciales de Earthdata.</li>
+    </ul>
+  </section>
+</aside>
+
+<main id="centro">
+  <div id="mapa" aria-label="Mapa de hexágonos"></div>
+
+  <aside id="der" hidden>
+    <button id="x-der" class="cerrar" aria-label="Cerrar">×</button>
+    <header class="celda-cab">
+      <h3 id="c-id">—</h3>
+      <p id="c-geo" class="geo"></p>
+    </header>
+
+    <section>
+      <div class="segmentos pequeno" id="s-serie"></div>
+      <div id="abanico" class="abanico"></div>
+      <p class="nota" id="n-abanico"></p>
+    </section>
+
+    <section>
+      <h2>Ventanas de obra</h2>
+      <div id="obra"></div>
+    </section>
+  </aside>
+
+  <footer id="tiempo">
+    <button id="b-play" class="play" aria-label="Reproducir"><svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg></button>
+    <div class="tl-info">
+      <span class="etq" id="tl-titulo">Día</span>
+      <strong id="tl-fecha">—</strong>
+      <span id="tl-valor" class="tl-valor"></span>
+    </div>
+    <div id="barras" class="barras"></div>
+  </footer>
+
+  <div id="pie">
+    <div id="pie-txt" hidden>
+      © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL) · NASA POWER ·
+      Amigos de Timmy, NASA Space Apps 2026.
+      <span class="alerta">Elevación y suelo sintéticos: el tamiz de terreno no sustituye a un topógrafo.</span>
+    </div>
+    <button id="b-pie" aria-expanded="false" aria-label="Créditos y avisos" title="Créditos y avisos">i</button>
+  </div>
+</main>
+
+<div id="aviso" role="status" hidden></div>
+
+<script src="vendor/leaflet.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
