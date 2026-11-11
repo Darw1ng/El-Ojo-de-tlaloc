@@ -99,6 +99,27 @@
 
 <main id="centro">
   <div id="mapa" aria-label="Mapa de hexágonos"></div>
+  <div id="hud" aria-hidden="true">
+    <div class="hud-ruido"></div>
+    <div class="hud-scan"></div>
+    <div class="hud-vin"></div>
+    <i class="hud-esq ai"></i><i class="hud-esq ad"></i><i class="hud-esq bi"></i><i class="hud-esq bd"></i>
+    <div class="hud-mira"><i></i></div>
+    <div class="hud-txt hud-ai">
+      <span><b>Ojo-1</b> · vista satelital · Veracruz</span>
+      <span id="hud-centro">—</span>
+      <span id="hud-gsd">—</span>
+    </div>
+    <div class="hud-txt hud-ad">
+      <span class="hud-vivo">Enlace</span>
+      <span id="hud-reloj">—</span>
+      <span id="hud-capa"></span>
+      <span id="hud-malla"></span>
+    </div>
+    <div class="hud-txt hud-bi">
+      <span>Cur <span id="hud-cursor">—</span> <b id="hud-celda"></b></span>
+    </div>
+  </div>
 
   <aside id="der" hidden>
     <button id="x-der" class="cerrar" aria-label="Cerrar">×</button>
@@ -131,7 +152,7 @@
 
   <div id="pie">
     <div id="pie-txt" hidden>
-      © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL) · NASA POWER ·
+      © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL) · Imagen: Esri, Maxar, Earthstar Geographics · NASA POWER ·
       Amigos de Timmy, NASA Space Apps 2026.
       <span class="alerta">Elevación y suelo sintéticos: el tamiz de terreno no sustituye a un topógrafo.</span>
     </div>

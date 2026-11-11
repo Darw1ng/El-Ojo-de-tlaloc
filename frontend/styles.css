@@ -1,4 +1,6 @@
-/* El Ojo de Tláloc — interfaz de trabajo: barra lateral, mapa claro, una tipografía. */
+/* El Ojo de Tláloc — interfaz de trabajo: barra lateral y mapa como cámara satelital con HUD
+   (imagen en gris, malla translúcida, retícula, scanlines y viñeta). Source Sans en la interfaz
+   y monoespaciada del sistema sólo en el HUD. */
 
 :root {
   --papel: #14171a;
@@ -15,6 +17,9 @@
   --ok: #5cb58a;
   --fuente: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
   --izq: 340px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --hud: #eef7f4;
+  --hud-tenue: rgba(238,247,244,.4);
 }
 
 * { box-sizing: border-box; }
@@ -153,15 +158,66 @@ label > input:focus, label > select:focus, button:focus-visible { outline: 2px s
 #mapa { position: absolute; inset: 0 0 84px 0; background: #16191b; }
 .leaflet-container { font-family: var(--fuente); background: #16191b; outline: none; }
 .leaflet-tile-pane .tiles { filter: grayscale(1) invert(1) brightness(.78) contrast(.92); }
-.leaflet-bar { border: 1px solid var(--linea2) !important; box-shadow: none !important; }
-.leaflet-bar a { color: var(--tinta) !important; background: var(--blanco) !important; border-bottom-color: var(--linea2) !important; }
-.leaflet-bar a:hover { background: var(--linea) !important; }
+.leaflet-tile-pane .satelite { filter: grayscale(1) contrast(1.3) brightness(.8); }
+.leaflet-hexes-pane { opacity: .56; }
+.leaflet-bar { border: 1px solid var(--hud-tenue) !important; border-radius: 0 !important; box-shadow: none !important; }
+.leaflet-bar a { color: var(--hud) !important; background: rgba(8,12,14,.6) !important; border-bottom-color: var(--hud-tenue) !important; border-radius: 0 !important; }
+.leaflet-bar a:hover { background: rgba(8,12,14,.85) !important; }
+.leaflet-top.leaflet-left .leaflet-control-zoom { margin: 22px 0 0 22px; }
+.leaflet-bottom.leaflet-left .leaflet-control-scale { margin: 0 0 22px 24px; }
+.leaflet-control-scale-line {
+  background: none; border-color: var(--hud); color: var(--hud); text-shadow: 0 0 3px #000;
+  font: 500 10px/1.3 var(--mono); letter-spacing: .06em;
+}
 .tip.leaflet-tooltip {
-  background: var(--blanco); color: var(--tinta); border: 1px solid var(--linea2);
-  border-radius: 4px; box-shadow: 0 1px 6px rgba(0,0,0,.5); padding: 4px 8px; font-size: 12.5px; line-height: 1.35;
+  background: rgba(8,12,14,.86); color: var(--hud); border: 1px solid var(--hud-tenue);
+  border-radius: 0; box-shadow: none; padding: 4px 8px; font: 11.5px/1.4 var(--mono); letter-spacing: .03em;
 }
 .tip.leaflet-tooltip::before { display: none; }
 .tip .mar { color: var(--tinta3); }
+
+.hud-etq {
+  white-space: nowrap; width: auto !important; height: auto !important; padding: 3px 6px;
+  font: 600 10.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  color: #0b0f11; background: var(--hud);
+}
+.fijado { animation: fija .6s linear 1; }
+@keyframes fija { 0%, 35% { opacity: 0; } 18%, 55%, 100% { opacity: 1; } }
+
+#hud { position: absolute; z-index: 450; inset: 0 0 84px 0; overflow: hidden; pointer-events: none; color: var(--hud); }
+#centro:has(#der:not([hidden])) #hud { right: 384px; }
+.hud-ruido, .hud-scan, .hud-vin { position: absolute; inset: 0; }
+.hud-scan { background: repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px); }
+.hud-vin { background: radial-gradient(ellipse 72% 68% at 50% 50%, transparent 58%, rgba(4,7,9,.62) 100%); }
+.hud-ruido {
+  inset: -60px; opacity: .07; animation: grano .6s steps(3) infinite;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+@keyframes grano { 0% { transform: translate(0, 0); } 33% { transform: translate(-23px, 17px); } 66% { transform: translate(19px, -29px); } }
+.hud-esq { position: absolute; width: 26px; height: 26px; border: 0 solid var(--hud); opacity: .85; }
+.hud-esq.ai { top: 10px; left: 10px; border-width: 2px 0 0 2px; }
+.hud-esq.ad { top: 10px; right: 10px; border-width: 2px 2px 0 0; }
+.hud-esq.bi { bottom: 10px; left: 10px; border-width: 0 0 2px 2px; }
+.hud-esq.bd { bottom: 10px; right: 10px; border-width: 0 2px 2px 0; }
+.hud-mira { position: absolute; left: 50%; top: 50%; width: 88px; height: 88px; margin: -44px 0 0 -44px; opacity: .7; }
+.hud-mira::before, .hud-mira::after { content: ""; position: absolute; filter: drop-shadow(0 0 1px #000); }
+.hud-mira::before { left: 0; right: 0; top: 50%; height: 1px; background: linear-gradient(90deg, var(--hud) 0 36%, transparent 36% 64%, var(--hud) 64%); }
+.hud-mira::after { top: 0; bottom: 0; left: 50%; width: 1px; background: linear-gradient(180deg, var(--hud) 0 36%, transparent 36% 64%, var(--hud) 64%); }
+.hud-mira i { position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1px 0 0 -1px; background: var(--hud); }
+.hud-txt {
+  position: absolute; display: flex; flex-direction: column; gap: 2px;
+  font: 500 11px/1.35 var(--mono); letter-spacing: .07em; text-transform: uppercase;
+  text-shadow: 0 0 2px #000, 0 1px 1px rgba(0,0,0,.8); font-variant-numeric: tabular-nums;
+}
+.hud-txt b { font-weight: 700; }
+.hud-ai { top: 22px; left: 66px; }
+.hud-ad { top: 22px; right: 24px; text-align: right; }
+.hud-bi { bottom: 50px; left: 24px; }
+.hud-vivo::before { content: "● "; color: #ff5b4e; animation: late 1.6s steps(2, jump-none) infinite; }
+@keyframes late { 50% { opacity: .15; } }
+@media (prefers-reduced-motion: reduce) {
+  .hud-ruido, .hud-vivo::before, .fijado { animation: none; }
+}
 
 #progreso { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 1200; overflow: hidden; }
 #progreso::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 30%; background: var(--acento); animation: corre 1.1s linear infinite; }

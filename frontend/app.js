@@ -1,5 +1,8 @@
 /* El Ojo de Tláloc — cliente del contrato de docs/04-api.md.
-   Sin build: Leaflet por CDN y JavaScript plano. */
+   Sin build: Leaflet por CDN y JavaScript plano.
+   El mapa es una vista de cámara satelital: imagen de Esri en gris, la malla como capa
+   translúcida sin costuras con retícula fina encima, HUD con telemetría y celda fijada,
+   y paneo/zoom limitados a la malla. Si la imagen no carga, cae al OSM oscuro de servir.py. */
 (() => {
 'use strict';
 
@@ -142,22 +145,65 @@ const meta = (id) => VARIABLES.find((v) => v.id === id);
 
 /* -------------------------------------------------------------------- mapa */
 
-let mapa, capaHex, poligonos = new Map(), indice = new Map();
+const SATELITE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const HUD = '#eef7f4';
+
+let mapa, capaHex, capaReticula, rendMarcas, marcas, marcaApunte = null, marcada = null;
+let poligonos = new Map(), indice = new Map();
 
 function iniciaMapa() {
-  mapa = L.map('mapa', { zoomControl: false, zoomSnap: 0.25, attributionControl: false, preferCanvas: true });
+  mapa = L.map('mapa', { zoomControl: false, zoomSnap: 0.25, attributionControl: false, preferCanvas: true, maxBoundsViscosity: 1 });
   L.control.zoom({ position: 'topleft' }).addTo(mapa);
+  L.control.scale({ position: 'bottomleft', imperial: false, maxWidth: 140 }).addTo(mapa);
+  for (const [nombre, z] of [['hexes', 350], ['reticula', 420], ['marcas', 430]]) {
+    const pane = mapa.createPane(nombre);
+    pane.style.zIndex = z;
+    if (nombre !== 'hexes') pane.style.pointerEvents = 'none';
+  }
   // Los mosaicos pasan por servir.py (/tiles): OSM bloquea las peticiones que llegan desde otros
   // orígenes (túneles, dominios) con un 403, y así salen del servidor con su propio User-Agent.
   // Si el servidor no tiene /tiles (p. ej. http.server a secas), cae al mosaico público de OSM.
-  const capaTiles = L.tileLayer(location.origin + '/tiles/{z}/{x}/{y}.png', { className: 'tiles', maxZoom: 17 }).addTo(mapa);
+  const capaTiles = L.tileLayer(location.origin + '/tiles/{z}/{x}/{y}.png', { className: 'tiles', maxZoom: 17 });
   let cayo = false;
   capaTiles.on('tileerror', () => {
     if (cayo) return;
     cayo = true;
     capaTiles.setUrl(E.area.mosaico_sugerido);
   });
+  const capaSat = L.tileLayer(SATELITE, { className: 'satelite', maxZoom: 17 }).addTo(mapa);
+  let satBien = 0, satMal = 0;
+  capaSat.on('tileload', () => { satBien++; });
+  capaSat.on('tileerror', () => {
+    if (++satMal < 4 || satBien > 0 || !mapa.hasLayer(capaSat)) return;
+    mapa.removeLayer(capaSat);
+    capaTiles.addTo(mapa);
+  });
+  rendMarcas = L.svg({ pane: 'marcas', padding: 0.3 });
+  marcas = L.layerGroup().addTo(mapa);
   mapa.on('click', () => cierraCelda());
+  mapa.on('move zoom', hudVista);
+  mapa.on('zoomend', () => { if (!$('#der').hidden) limitaPaneo(); });
+  mapa.on('mousemove', (ev) => hudCursor(ev.latlng));
+  mapa.on('mouseout', () => hudCursor(null));
+  hudReloj();
+  setInterval(hudReloj, 1000);
+}
+
+function anchoTapado() {
+  return $('#der').hidden ? 0 : Math.max(0, mapa.getSize().x - $('#hud').offsetWidth);
+}
+
+function limitaPaneo() {
+  if (!capaHex) return;
+  const b = capaHex.getBounds().pad(0.06);
+  const vista = mapa.getBounds();
+  const grados = anchoTapado() * (vista.getEast() - vista.getWest()) / mapa.getSize().x;
+  mapa.setMaxBounds(L.latLngBounds(b.getSouthWest(), [b.getNorth(), b.getEast() + grados]));
+}
+
+function ajustaZoomMinimo() {
+  if (!capaHex) return;
+  mapa.setMinZoom(mapa.getBoundsZoom(capaHex.getBounds(), false, L.point(32, 32)));
 }
 
 function encuadra() {
@@ -168,20 +214,101 @@ function encuadra() {
 
 function dibujaMalla() {
   if (capaHex) mapa.removeLayer(capaHex);
+  if (capaReticula) mapa.removeLayer(capaReticula);
+  apunta(null);
   poligonos = new Map();
   indice = new Map(E.malla.features.map((f, i) => [f.properties.id, i]));
-  const render = L.canvas({ padding: 0.3 });
   capaHex = L.geoJSON(E.malla, {
-    renderer: render,
+    renderer: L.canvas({ padding: 0.3, pane: 'hexes' }),
+    pane: 'hexes',
     style: estiloCelda,
     onEachFeature: (f, capa) => {
       poligonos.set(f.properties.id, capa);
       capa.bindTooltip(() => textoTip(f.properties), { sticky: true, className: 'tip', direction: 'top', opacity: 1 });
       capa.on('click', (ev) => { L.DomEvent.stopPropagation(ev); seleccionaCelda(f.properties.id); });
-      capa.on('mouseover', () => { if (E.seleccion !== f.properties.id) capa.setStyle({ weight: 2, color: '#e7e9eb' }); });
-      capa.on('mouseout', () => capaHex.resetStyle(capa));
+      capa.on('mouseover', () => apunta(capa));
+      capa.on('mouseout', () => apunta(null));
     },
   }).addTo(mapa);
+  capaReticula = L.geoJSON(E.malla, {
+    renderer: L.canvas({ padding: 0.3, pane: 'reticula' }),
+    pane: 'reticula',
+    interactive: false,
+    style: { fill: false, color: HUD, opacity: 0.16, weight: 0.8 },
+  }).addTo(mapa);
+  limitaPaneo();
+  ajustaZoomMinimo();
+  $('#hud-malla').textContent = `Malla 1:${16 * 2 ** E.nivel} · ${E.malla.features.length} celdas`;
+}
+
+function contorno(latlngs, ancho, extra = {}) {
+  const op = { renderer: rendMarcas, pane: 'marcas', interactive: false, fill: false, lineCap: 'square', lineJoin: 'miter' };
+  return L.featureGroup([
+    L.polyline(latlngs, { ...op, ...extra, color: '#000', opacity: 0.55, weight: ancho + 3 }),
+    L.polyline(latlngs, { ...op, ...extra, color: HUD, opacity: 1, weight: ancho }),
+  ]);
+}
+
+function cerrado(capa) {
+  const anillo = capa.getLatLngs()[0];
+  return [...anillo, anillo[0]];
+}
+
+function apunta(capa) {
+  if (marcaApunte) { mapa.removeLayer(marcaApunte); marcaApunte = null; }
+  $('#hud-celda').textContent = capa ? capa.feature.properties.id : '';
+  if (!capa || capa.feature.properties.id === E.seleccion) return;
+  marcaApunte = contorno(cerrado(capa), 1.2).addTo(mapa);
+}
+
+function pintaSeleccion() {
+  if (marcada === E.seleccion) return;
+  marcada = E.seleccion;
+  marcas.clearLayers();
+  const capa = E.seleccion && poligonos.get(E.seleccion);
+  if (!capa) return;
+  if (marcaApunte) { mapa.removeLayer(marcaApunte); marcaApunte = null; }
+  marcas.addLayer(contorno(cerrado(capa), 1.6));
+  const b = capa.getBounds();
+  const my = (b.getNorth() - b.getSouth()) * 0.14, mx = (b.getEast() - b.getWest()) * 0.14;
+  const n = b.getNorth() + my, s = b.getSouth() - my, o = b.getWest() - mx, e = b.getEast() + mx;
+  const ly = (n - s) * 0.22, lx = (e - o) * 0.22;
+  marcas.addLayer(contorno([
+    [[n - ly, o], [n, o], [n, o + lx]],
+    [[n, e - lx], [n, e], [n - ly, e]],
+    [[s + ly, e], [s, e], [s, e - lx]],
+    [[s, o + lx], [s, o], [s + ly, o]],
+  ], 2.4, { className: 'fijado' }));
+  marcas.addLayer(L.marker([n, o], {
+    pane: 'marcas', interactive: false, keyboard: false,
+    icon: L.divIcon({ className: 'hud-etq', html: `${esc(E.seleccion)} · fijado`, iconSize: null, iconAnchor: [-2, 24] }),
+  }));
+}
+
+/* ------------------------------------------------------------------- hud */
+
+function dms(v, pos, neg) {
+  const t = Math.round(Math.abs(v) * 3600);
+  const g = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return `${g}°${String(m).padStart(2, '0')}′${String(s).padStart(2, '0')}″${v >= 0 ? pos : neg}`;
+}
+const coordenada = (ll) => `${dms(ll.lat, 'N', 'S')} ${dms(ll.lng, 'E', 'W')}`;
+
+function hudVista() {
+  if (!mapa) return;
+  const h = $('#hud').getBoundingClientRect(), c = mapa.getContainer().getBoundingClientRect();
+  const centro = mapa.containerPointToLatLng([h.left - c.left + h.width / 2, h.top - c.top + h.height / 2]);
+  const gsd = 40075016.686 * Math.cos(centro.lat * Math.PI / 180) / 2 ** (mapa.getZoom() + 8);
+  $('#hud-centro').textContent = coordenada(centro);
+  $('#hud-gsd').textContent = `GSD ${gsd < 10 ? gsd.toFixed(1) : Math.round(gsd)} m/px · Z${mapa.getZoom().toFixed(2)}`;
+}
+
+function hudCursor(ll) {
+  $('#hud-cursor').textContent = ll ? coordenada(ll) : '—';
+}
+
+function hudReloj() {
+  $('#hud-reloj').textContent = `${new Date().toISOString().slice(0, 19).replace('T', ' ')} UTC`;
 }
 
 function valorEn(id) {
@@ -205,19 +332,17 @@ function colorCelda(id) {
 }
 
 function estiloCelda(f) {
-  const id = f.properties.id;
-  const color = colorCelda(id);
-  const sel = id === E.seleccion;
+  const color = colorCelda(f.properties.id);
   if (color) {
-    return { fillColor: color, fillOpacity: 0.72, color: sel ? '#ffffff' : 'rgba(20,23,26,.7)', weight: sel ? 3 : 0.8, dashArray: null };
+    return { stroke: true, color, opacity: 1, weight: 1, fillColor: color, fillOpacity: 1 };
   }
   // sin dominio (mar para humedad/escurrimiento): relleno nulo, nunca un 0 pintado
-  return { fillColor: '#000', fillOpacity: 0, color: sel ? '#ffffff' : 'rgba(231,233,235,.25)', weight: sel ? 3 : 0.7, dashArray: sel ? null : '2 4' };
+  return { stroke: false, fillColor: '#000', fillOpacity: 0 };
 }
 
 function repinta() {
   poligonos.forEach((capa) => capa.setStyle(estiloCelda(capa.feature)));
-  if (E.seleccion && poligonos.has(E.seleccion)) poligonos.get(E.seleccion).bringToFront();
+  pintaSeleccion();
 }
 
 function textoTip(p) {
@@ -368,6 +493,8 @@ function marcaBarra() {
   $('#tl-fecha').textContent = f ? `${fechaCorta(f)}` : '—';
   const nombre = E.capa.modo === 'riesgo' ? 'Riesgo' : meta(E.capa.variable).nombre;
   $('#tl-titulo').textContent = `Día ${E.dia + 1} · ${nombre}`;
+  const detalle = E.capa.modo === 'valor' ? E.capa.stat : E.capa.modo === 'prob' ? 'probabilidad' : null;
+  $('#hud-capa').textContent = [nombre, detalle, f && fechaCorta(f)].filter(Boolean).join(' · ');
   const m = E.medias?.[E.dia];
   $('#tl-valor').textContent = esNum(m) ? `media del dominio ${formato(m)} ${unidadVigente()}` : '';
 }
@@ -571,6 +698,10 @@ function seleccionaCelda(id) {
   E.seleccion = id;
   $('#der').hidden = false;
   repinta();
+  limitaPaneo();
+  const capa = poligonos.get(id);
+  if (capa) mapa.panInside(capa.getBounds().getCenter(), { paddingTopLeft: [80, 80], paddingBottomRight: [anchoTapado() + 80, 80] });
+  hudVista();
   pintaCeldaDatos();
 }
 
@@ -579,6 +710,8 @@ function cierraCelda() {
   E.seleccion = null;
   $('#der').hidden = true;
   repinta();
+  limitaPaneo();
+  hudVista();
 }
 
 async function pintaCeldaDatos() {
@@ -784,6 +917,6 @@ async function arranca() {
   }
 }
 
-addEventListener('resize', () => { if (mapa) { mapa.invalidateSize(); } });
+addEventListener('resize', () => { if (mapa) { mapa.invalidateSize(); ajustaZoomMinimo(); hudVista(); } });
 arranca();
 })();
