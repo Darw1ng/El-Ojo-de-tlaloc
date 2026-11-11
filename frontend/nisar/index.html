@@ -1,0 +1,182 @@
+<!doctype html>
+<!-- El Ojo de Tláloc · NISAR: story map bilingüe y explorador de la temporada de lluvias
+     2026 en Veracruz–Boca del Río vista por el radar NISAR (NASA Space Apps 2026, reto
+     "Dancing with the SARs"). Sitio estático: Mapbox GL JS 3.8 + JS plano, sin build.
+     El token se lee de config.local.js (fuera de git) o de ?token= en la URL. -->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>El Ojo de Tláloc · NISAR</title>
+<meta name="description" content="La temporada de lluvias 2026 en Veracruz y Boca del Río vista por el radar NISAR: historia interactiva y explorador de mapas.">
+<meta name="theme-color" content="#0f1214">
+<meta property="og:type" content="website">
+<meta property="og:title" content="El baile del agua · El Ojo de Tláloc · NISAR">
+<meta property="og:description" content="Diez pasadas del radar NISAR sobre Veracruz y Boca del Río en la temporada de lluvias 2026. NASA Space Apps 2026 · Dancing with the SARs.">
+<meta property="og:image" content="datos/medios/portada_es.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="../favicon.png">
+<link rel="stylesheet" href="../vendor/fuentes.css">
+<link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.css">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body class="modo-historia">
+
+<a class="saltar" href="#modo=explorar" id="saltar" data-t="saltar">Saltar al explorador</a>
+
+<div id="mapas">
+  <div id="mapa" class="mapa"></div>
+  <div id="mapa-b" class="mapa mapa-b" hidden></div>
+</div>
+
+<div id="cortina" class="cortina" hidden>
+  <span class="raya"></span>
+  <span class="lado izq" id="cortina-izq"></span>
+  <span class="lado der" id="cortina-der"></span>
+</div>
+<button type="button" class="asa" id="cortina-asa" hidden role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" data-t-aria="cmp_asa">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l-6 6 6 6M15 6l6 6-6 6"/></svg>
+</button>
+
+<header id="barra" class="barra">
+  <a class="marca" href="#" id="marca">
+    <img src="../logo.png" alt="" width="36" height="36">
+    <span><b>El Ojo de Tláloc</b><small data-t="marca_sub"></small></span>
+  </a>
+  <div id="chip" class="chip" hidden>
+    <button type="button" class="chip-play" id="chip-play" hidden></button>
+    <span class="chip-punto" id="chip-punto"></span>
+    <span class="chip-txt" id="chip-txt" aria-live="polite"></span>
+  </div>
+  <nav class="acciones">
+    <a class="enlace-tablero" href="../index.html" data-t="nav_tablero"></a>
+    <button type="button" class="btn btn-sec btn-peq" id="b-explorar" data-t="nav_explorar"></button>
+    <div class="idioma" role="group" aria-label="Idioma / Language">
+      <button type="button" data-lang="es" aria-pressed="true">ES</button>
+      <button type="button" data-lang="en" aria-pressed="false">EN</button>
+    </div>
+  </nav>
+</header>
+
+<main id="historia">
+  <section id="portada" class="portada" aria-labelledby="portada-titulo">
+    <div class="portada-cont">
+      <p class="kicker" data-t="portada_kicker"></p>
+      <h1 id="portada-titulo" data-t="portada_titulo"></h1>
+      <p class="sub" id="portada-sub"></p>
+      <dl class="cifras-portada" id="portada-cifras"></dl>
+      <div class="ctas">
+        <a class="btn btn-pri" href="#" id="b-comenzar"><span data-t="portada_cta"></span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg></a>
+        <button type="button" class="btn btn-sec" id="b-explorar-portada" data-t="portada_explorar"></button>
+      </div>
+    </div>
+    <p class="pista-scroll" aria-hidden="true"><span data-t="desliza"></span><i></i></p>
+  </section>
+
+  <div id="pasos"></div>
+
+  <section id="final" class="final" aria-labelledby="final-titulo">
+    <div class="final-cont">
+      <h2 id="final-titulo" data-t="fin_titulo"></h2>
+      <p data-t="fin_texto"></p>
+      <div class="ctas centro">
+        <button type="button" class="btn btn-pri" id="b-explorar-final" data-t="fin_cta"></button>
+        <a class="btn btn-sec" href="../index.html" data-t="fin_tablero"></a>
+      </div>
+    </div>
+  </section>
+
+  <footer id="creditos" class="creditos"></footer>
+</main>
+
+<section id="explorador" class="explorador" hidden aria-labelledby="panel-titulo">
+  <button type="button" class="btn btn-sec btn-flot" id="b-panel" aria-expanded="false" aria-controls="panel">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5"/></svg>
+    <span data-t="exp_capas_boton"></span>
+  </button>
+  <aside id="panel" class="panel">
+    <div class="panel-cab">
+      <h2 id="panel-titulo" tabindex="-1" data-t="exp_titulo"></h2>
+      <button type="button" class="btn-txt" id="b-volver" data-t="exp_volver"></button>
+    </div>
+    <fieldset class="grupo">
+      <legend data-t="exp_capa"></legend>
+      <div id="lista-capas" class="lista-capas"></div>
+    </fieldset>
+    <fieldset class="grupo" id="grupo-hex" hidden>
+      <legend data-t="exp_hex"></legend>
+      <div class="seg" id="seg-hex">
+        <button type="button" data-hex="humedad" data-t="hex_humedad"></button>
+        <button type="button" data-hex="agua" data-t="hex_agua"></button>
+      </div>
+    </fieldset>
+    <div class="grupo" id="grupo-opacidad">
+      <label class="etq-rango" for="r-opacidad"><span data-t="exp_opacidad"></span><output id="o-opacidad">100 %</output></label>
+      <input type="range" id="r-opacidad" min="0" max="100" step="5" value="100">
+    </div>
+    <fieldset class="grupo">
+      <legend data-t="exp_base"></legend>
+      <div class="seg" id="seg-base">
+        <button type="button" data-base="oscuro" data-t="base_oscuro"></button>
+        <button type="button" data-base="satelite" data-t="base_satelite"></button>
+      </div>
+    </fieldset>
+    <fieldset class="grupo">
+      <legend data-t="exp_pois"></legend>
+      <div class="seg" id="seg-pois">
+        <button type="button" data-pois="todos" data-t="pois_todos"></button>
+        <button type="button" data-pois="expuestos" data-t="pois_expuestos"></button>
+        <button type="button" data-pois="ninguno" data-t="pois_ninguno"></button>
+      </div>
+      <p class="nota" id="pois-resumen"></p>
+    </fieldset>
+    <fieldset class="grupo">
+      <legend data-t="exp_comparar_tit"></legend>
+      <label class="interruptor"><input type="checkbox" id="c-comparar"><span data-t="exp_comparar"></span></label>
+      <div id="cmp-fechas" class="cmp-fechas" hidden>
+        <label><span data-t="cmp_izq"></span><select id="s-izq"></select></label>
+        <label><span data-t="cmp_der"></span><select id="s-der"></select></label>
+      </div>
+      <p class="nota" id="cmp-nota" hidden data-t="cmp_no_fechas"></p>
+    </fieldset>
+    <div class="grupo" id="leyenda" aria-live="polite"></div>
+    <div class="grupo">
+      <p class="nota" data-t="exp_pista"></p>
+      <button type="button" class="btn btn-sec btn-peq" id="b-centro" data-t="exp_centro"></button>
+    </div>
+    <div class="grupo pie-panel">
+      <button type="button" class="btn-txt" id="b-creditos" data-t="creditos"></button>
+      <a href="../index.html" data-t="nav_tablero"></a>
+    </div>
+  </aside>
+  <div id="linea" class="linea"></div>
+</section>
+
+<div id="tip-mapa" class="tip-mapa" hidden></div>
+
+<dialog id="dlg-creditos" class="dialogo" aria-labelledby="dlg-titulo">
+  <div class="dialogo-cab">
+    <h2 id="dlg-titulo" data-t="creditos"></h2>
+    <button type="button" class="cerrar" id="dlg-cerrar" data-t-aria="cerrar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div id="dlg-cuerpo"></div>
+</dialog>
+
+<div id="aviso" class="aviso" role="alert" hidden></div>
+<div id="cargando" class="cargando" role="status"><span data-t="cargando">Cargando radar…</span></div>
+
+<noscript><p class="aviso">Esta historia necesita JavaScript. / This story needs JavaScript.</p></noscript>
+
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.js"></script>
+<script src="util.js"></script>
+<script src="textos.js"></script>
+<script src="capitulos.js"></script>
+<script src="graficas.js"></script>
+<script src="linea.js"></script>
+<script src="mapa.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

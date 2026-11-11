@@ -1,0 +1,8 @@
+earthaccess>=0.19
+h5py>=3.16
+rasterio>=1.5
+pillow>=13.0
+scipy>=1.14
+scikit-image>=0.25
+fonttools>=4.60
+brotli>=1.1

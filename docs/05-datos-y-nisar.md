@@ -14,7 +14,7 @@ alimentada con supuestos.
 | Gradientes espaciales (orografía, costa) | sintéticos, conservadores | DEM real (SRTM 30 m / Copernicus GLO-30) | medio |
 | Línea de costa | 3 puntos interpolados | Natural Earth o extracto de OSM | bajo |
 | Textura del suelo | una sola (`franco`) para todo | INEGI serie edafológica o SoilGrids | medio |
-| Humedad de suelo observada | **sintética** (`observacion_sintetica`) | NISAR GCOV banda L | alto: descarga y preprocesamiento |
+| Humedad de suelo observada | **índice real de NISAR GCOV** en la zona conurbada (`frontend/nisar/datos/hex.geojson`, ver [08](08-nisar-veracruz.md)); la API del pronóstico sigue usando `observacion_sintetica` | conectar el índice a `asimilacion.py` con textura de suelo | medio: conversión a saturación |
 | Capacidad de agua del suelo | función de la elevación | tabla por textura y profundidad | bajo |
 
 Las dos filas que importan para el reto son la de humedad de suelo observada

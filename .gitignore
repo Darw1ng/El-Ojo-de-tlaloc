@@ -29,3 +29,6 @@ Thumbs.db
 
 # Frontend: cache de mosaicos de OSM generada por servir.py
 frontend/.tiles/
+
+# Token local de Mapbox
+frontend/nisar/config.local.js

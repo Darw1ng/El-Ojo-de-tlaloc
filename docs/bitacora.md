@@ -349,6 +349,23 @@ Las que necesitan red se **saltan** si no hay caché, en lugar de fallar: un CI
 sin internet no debería reportar rojo, y pegarle a Overpass en cada corrida
 sería abusar de un servicio gratuito.
 
+### 20. NISAR de verdad, y dos veces que el dato desmintió al método
+
+Con cuenta de Earthdata aparecieron 41 gránulos GCOV sobre el puerto, de junio
+a octubre. Se leyó sólo la ventana de la zona conurbada de cada HDF5 remoto
+(diez fechas en ocho minutos en vez de 47 GB) y salió la historia de
+`frontend/nisar/`. El detalle está en [08-nisar-veracruz](08-nisar-veracruz.md).
+
+Dos correcciones que vale la pena dejar escritas:
+
+- **Otsu confundía campo seco con agua.** Con umbral de −11.3 dB «el agua»
+  bajaba cuando llovía: era suelo liso que se aclaraba al mojarse. El valle
+  del histograma (−14.8 dB) lo arregló, y el efecto se volvió un producto: el
+  índice de humedad por detección de cambio.
+- **La ciudad también se movía.** Los blancos urbanos oscilaban ~1 dB entre
+  pasadas con el mismo patrón que el campo. Son productos provisionales; se
+  normalizó cada fecha contra la ciudad y el vaivén del agua desapareció.
+
 ---
 
 ## Pendientes

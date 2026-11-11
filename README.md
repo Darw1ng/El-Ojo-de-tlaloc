@@ -9,6 +9,30 @@ equipo Amigos de Timmy (Universal Event) · entrega **15-nov-2026**.
 
 ---
 
+## NISAR sobre Veracruz y Boca del Río
+
+![Diez pasadas de NISAR sobre la zona conurbada, 25 jun – 23 oct 2026](frontend/nisar/datos/medios/timelapse.gif)
+
+**«El baile del agua»** (`frontend/nisar/`) es la respuesta directa al reto:
+una historia interactiva en español e inglés, con Mapbox, hecha con **diez
+pasadas reales de NISAR** (GCOV, banda L, HH + HV, 10 m) sobre la zona
+conurbada durante la temporada de lluvias de 2026. Muestra el agua que aparece
+y desaparece, la humedad del suelo que sube después de la lluvia, las lagunas
+interdunarias que el radar ve cubiertas de vegetación y por qué una revisita
+de 12 días no alcanza para ver una inundación urbana. Al final, un explorador
+con línea de tiempo, comparador de fechas y la serie de cualquier punto.
+
+```bash
+cd frontend && python servir.py          # http://localhost:5173/nisar/
+```
+
+Necesita `frontend/nisar/config.local.js` con `window.MAPBOX_TOKEN` (ver
+`config.example.js`; no se versiona) o `?token=pk...` en la URL. Método,
+cifras y límites en [docs/08-nisar-veracruz.md](docs/08-nisar-veracruz.md).
+
+Video de demo de 30 s para la entrega: `frontend/nisar/datos/medios/demo_en.mp4`
+(y `demo_es.mp4`); el proyecto de HyperFrames que lo genera no vive en este repo.
+
 ## La idea en un párrafo
 
 NISAR no mide la lluvia de mañana: mide el **estado de la superficie** hoy, con
@@ -65,9 +89,10 @@ hexágonos y qué significa exactamente la escala 1:16.
 | Asimilación de humedad de suelo | **listo** (con observación sintética; falta enchufar gránulos de NISAR) |
 | Métricas de verificación | **listo** (CRPS, Brier, confiabilidad, dispersión) |
 | API HTTP | **listo**, 23 endpoints documentados en OpenAPI |
-| GPM IMERG, SMAP, NISAR, DEM | interfaz escrita, **faltan credenciales Earthdata** |
+| **NISAR GCOV (radar)** | **listo, datos reales**: 10 pasadas, agua, cambio, humedad del suelo, lagunas, exposición |
+| GPM IMERG, SMAP, DEM | ya hay cuenta de Earthdata; falta el adaptador |
 | Elevación y textura de suelo | **sintéticas** — [qué dataset las reemplaza](docs/05-datos-y-nisar.md) |
-| Frontend | lo hace otra persona — contrato en [docs/04-api.md](docs/04-api.md) |
+| Frontend | tablero de pronóstico (`frontend/`) e historia de NISAR (`frontend/nisar/`) |
 
 **306 pruebas en verde.** Las que necesitan red se saltan si no hay caché.
 
@@ -115,7 +140,8 @@ backend/            el modelo y la API (Python, solo numpy + FastAPI)
       ventanas.py   calendario de obra por actividad
     api/            capa HTTP
   tests/            306 pruebas
-frontend/           lo hace diseño; aquí sólo el contrato
+frontend/           tablero de pronóstico (Leaflet) y nisar/, la historia de NISAR (Mapbox)
+scripts/            descarga de NISAR (nisar_gcov.py), productos y assets de la historia
 docs/               un documento por decisión, más la bitácora
 datos/              entrada y salida (no se versiona el contenido)
 ```
@@ -132,6 +158,8 @@ datos/              entrada y salida (no se versiona el contenido)
 | [05-datos-y-nisar](docs/05-datos-y-nisar.md) | qué es sintético hoy y qué dataset lo sustituye |
 | [06-validacion](docs/06-validacion.md) | métricas medidas, con los números flojos incluidos |
 | **[07-plataforma-de-fusion](docs/07-plataforma-de-fusion.md)** | **OSM + NASA + globo sonda: cómo se unen y qué sale** |
+| **[08-nisar-veracruz](docs/08-nisar-veracruz.md)** | **NISAR real sobre la zona conurbada: datos, método, resultados y límites** |
+| [09-space-apps-submission](docs/09-space-apps-submission.md) | borrador en inglés del formulario de entrega, con uso de IA declarado |
 | [bitacora](docs/bitacora.md) | el paso a paso de la construcción |
 | [adr/](docs/adr/) | decisiones con su alternativa descartada |
 
