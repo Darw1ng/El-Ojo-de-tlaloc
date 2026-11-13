@@ -40,11 +40,27 @@
     </div>
     <label class="check">
       <input type="checkbox" id="f-radar">
-      <span>Corregir la humedad inicial con radar <em class="alerta">(dato sintético, no es NISAR)</em></span>
+      <span>Corregir la humedad inicial con NISAR <em>(pasada real más cercana, 25 jun – 23 oct 2026; fuera de esas fechas usa un dato sintético)</em></span>
     </label>
+    <label class="check">
+      <input type="checkbox" id="f-fusion">
+      <span>Usar todas las fuentes <em>(clima de NASA POWER e impermeabilidad de OpenStreetMap; la primera vez tarda)</em></span>
+    </label>
+    <details class="sondeo" id="d-sondeo">
+      <summary>Perfil de globo sonda / CanSat</summary>
+      <p class="nota">Pega el CSV del globo o la tabla de Wyoming/IGRA, o sube el archivo. Si hay perfil, el pronóstico usa todas las fuentes y el perfil ajusta la probabilidad de lluvia del día.</p>
+      <textarea id="f-sondeo" rows="5" spellcheck="false" placeholder="presion_hpa,temp_c,humedad_rel,altura_m&#10;1008,29.5,78,10&#10;…"></textarea>
+      <div class="sondeo-acc">
+        <label class="boton claro chico">Subir archivo<input type="file" id="f-sondeo-arch" accept=".csv,.txt,text/plain" hidden></label>
+        <button id="b-sondeo" class="boton claro chico" type="button">Leer perfil</button>
+        <button id="b-sondeo-x" class="boton claro chico" type="button" hidden>Quitar</button>
+      </div>
+      <div id="sondeo-res"></div>
+    </details>
     <button id="b-correr" class="boton">Calcular pronóstico</button>
     <div id="resumen" class="resumen" hidden></div>
     <div id="asim" class="asim" hidden></div>
+    <div id="fusion" class="fusion" hidden></div>
   </section>
 
   <section>
@@ -53,6 +69,7 @@
       <button data-modo="valor" class="on">Valor</button>
       <button data-modo="prob">Probabilidad</button>
       <button data-modo="riesgo">Riesgo</button>
+      <button data-modo="aptitud">Terreno</button>
     </div>
 
     <ul id="l-vars" class="vars"></ul>
@@ -91,9 +108,10 @@
     <ul id="proc">
       <li class="sint"><b>Sintético:</b> elevación, tierra y mar, distancia a la costa y capacidad del suelo.</li>
       <li class="sint" id="proc-clima"><b>Sintético:</b> climatología base.</li>
-      <li><b>Real:</b> OpenStreetMap (Overpass), NASA POWER y perfil de globo sonda.</li>
-      <li class="pend"><b>Pendiente:</b> NISAR, SMAP y GPM IMERG, faltan credenciales de Earthdata.</li>
+      <li><b>Real:</b> OpenStreetMap (Overpass), NASA POWER, perfil de globo sonda y NISAR GCOV (10 pasadas, sólo la zona conurbada).</li>
+      <li class="pend"><b>Pendiente:</b> SMAP y GPM IMERG.</li>
     </ul>
+    <div id="proc-adv" class="proc-adv"></div>
   </section>
 </aside>
 
@@ -137,6 +155,11 @@
     <section>
       <h2>Ventanas de obra</h2>
       <div id="obra"></div>
+    </section>
+
+    <section>
+      <h2>Qué hay en esta celda</h2>
+      <div id="exp-celda"></div>
     </section>
   </aside>
 

@@ -92,6 +92,11 @@ class PeticionAsimilacion(BaseModel):
     )
     miembros: int = Field(N_MIEMBROS_DEFECTO, ge=2, le=MAX_MIEMBROS)
     semilla: int | None = SEMILLA_DEFECTO
+    fuente: str | None = Field(
+        None, max_length=200,
+        description="Rotulo de procedencia que viaja al diagnostico (por ejemplo "
+                    "'NISAR GCOV 2026-09-05'). Sin el, dice 'por_celda' o 'puntos'.",
+    )
     sintetica: bool = Field(
         False,
         description="true genera una observacion falsa para probar la cadena "

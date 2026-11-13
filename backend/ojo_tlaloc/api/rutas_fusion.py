@@ -8,6 +8,7 @@ estado.
 from __future__ import annotations
 
 import datetime as dt
+import time
 
 import numpy as np
 from fastapi import Body, HTTPException, Query
@@ -397,17 +398,27 @@ def registrar(app, estado) -> None:
             else:
                 mu = mu_info["mu"]
 
+        # Humedad inicial corregida con radar (POST /api/asimilar).
+        id_asim = cuerpo.get("id_asimilacion")
+        humedad, aviso = None, None
+        if id_asim:
+            from .app import humedad_asimilada
+            humedad, aviso = humedad_asimilada(estado, id_asim, nivel, miembros)
+
+        t0 = time.perf_counter()
         try:
             resultado = sim.simular(
                 fecha_inicio=fecha_inicio, n_dias=dias, n_miembros=miembros,
-                semilla=semilla, mu_campo=mu,
+                semilla=semilla, mu_campo=mu, humedad_inicial=humedad,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from None
+        segundos = time.perf_counter() - t0
 
         id_corrida = "fusion-{}-{}".format(fecha_inicio.isoformat(),
                                            abs(hash((dias, miembros, nivel,
-                                                     semilla, mu))) % 10**10)
+                                                     semilla, mu,
+                                                     id_asim or ""))) % 10**10)
         estado.guardar_corrida(id_corrida, {
             "resultado": resultado, "nivel": nivel,
             "creada": dt.datetime.now().isoformat(timespec="seconds"),
@@ -431,11 +442,15 @@ def registrar(app, estado) -> None:
             },
             "mu_detalle": mu_info,
             "advertencias": exp.advertencias,
+            "aviso": aviso,
             "resumen": {
                 **resumen_dominio(resultado, clima.es_tierra),
                 "nivel": nivel,
                 "escala": "1:{}".format(malla.n_ancho),
+                "segundos_calculo": round(segundos, 3),
+                "memoria_mb": round(mb, 1),
                 "fechas": resultado.fechas,
+                "asimilacion_aplicada": bool(id_asim),
             },
         }
 

@@ -272,33 +272,9 @@ def crear_app() -> FastAPI:
         humedad = peticion.humedad_inicial
         aviso = None
         if peticion.id_asimilacion:
-            if peticion.id_asimilacion not in estado.asimilaciones:
-                raise HTTPException(
-                    status_code=404,
-                    detail="id_asimilacion no encontrado; vuelve a llamar "
-                           "POST /api/asimilar",
-                )
-            guardado = estado.asimilaciones[peticion.id_asimilacion]
-            if guardado["nivel"] != peticion.nivel:
-                raise HTTPException(
-                    status_code=409,
-                    detail="la asimilacion es del nivel {} y el pronostico "
-                           "del {}".format(guardado["nivel"], peticion.nivel),
-                )
-            humedad = guardado["estado_suelo"]
-            if humedad.shape[0] != peticion.miembros:
-                # Se reconcilian los tamanos promediando o repitiendo: no es
-                # ideal (pierde la estructura del ensamble asimilado) y por eso
-                # se avisa en la respuesta.
-                humedad = np.nanmean(humedad, axis=0)
-                aviso = (
-                    "la asimilacion se hizo con {} miembros y el pronostico "
-                    "pide {}: se uso la media del estado asimilado. Para "
-                    "conservar el ensamble, corre los dos con el mismo "
-                    "numero de miembros.".format(
-                        guardado["estado_suelo"].shape[0], peticion.miembros
-                    )
-                )
+            humedad, aviso = humedad_asimilada(
+                estado, peticion.id_asimilacion, peticion.nivel, peticion.miembros
+            )
 
         t0 = time.perf_counter()
         resultado = sim.simular(
@@ -486,7 +462,7 @@ def crear_app() -> FastAPI:
                 )
             obs = ObservacionHumedad(
                 valores=valores, sigma=peticion.sigma,
-                fecha=str(peticion.fecha), fuente="por_celda",
+                fecha=str(peticion.fecha), fuente=peticion.fuente or "por_celda",
             )
         elif peticion.puntos_lat and peticion.puntos_lon and peticion.puntos_valor:
             if not (len(peticion.puntos_lat) == len(peticion.puntos_lon)
@@ -504,7 +480,7 @@ def crear_app() -> FastAPI:
             )
             obs = ObservacionHumedad(
                 valores=promedios, sigma=peticion.sigma,
-                fecha=str(peticion.fecha), fuente="puntos",
+                fecha=str(peticion.fecha), fuente=peticion.fuente or "puntos",
             )
         else:
             raise HTTPException(
@@ -551,6 +527,39 @@ def crear_app() -> FastAPI:
 
 
 # --- utilidades ------------------------------------------------------------
+
+
+def humedad_asimilada(estado, id_asimilacion: str, nivel: int, miembros: int):
+    """Estado del suelo guardado por POST /api/asimilar, listo para simular.
+
+    Lo usan POST /api/pronostico y POST /api/pronostico/fusion. Devuelve
+    (humedad, aviso); aviso es None salvo que haya que reconciliar miembros.
+    """
+    if id_asimilacion not in estado.asimilaciones:
+        raise HTTPException(
+            status_code=404,
+            detail="id_asimilacion no encontrado; vuelve a llamar "
+                   "POST /api/asimilar",
+        )
+    guardado = estado.asimilaciones[id_asimilacion]
+    if guardado["nivel"] != nivel:
+        raise HTTPException(
+            status_code=409,
+            detail="la asimilacion es del nivel {} y el pronostico "
+                   "del {}".format(guardado["nivel"], nivel),
+        )
+    humedad = guardado["estado_suelo"]
+    if humedad.shape[0] == miembros:
+        return humedad, None
+    # Se reconcilian los tamanos promediando: no es ideal (pierde la
+    # estructura del ensamble asimilado) y por eso se avisa en la respuesta.
+    return np.nanmean(humedad, axis=0), (
+        "la asimilacion se hizo con {} miembros y el pronostico "
+        "pide {}: se uso la media del estado asimilado. Para "
+        "conservar el ensamble, corre los dos con el mismo "
+        "numero de miembros.".format(humedad.shape[0], miembros)
+    )
+
 
 
 def _lista(a) -> list:

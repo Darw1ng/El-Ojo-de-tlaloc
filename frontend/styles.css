@@ -117,6 +117,39 @@ label > input:focus, label > select:focus, button:focus-visible { outline: 2px s
 .asim { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--alerta); border-radius: 6px; }
 .asim .fuente { font-weight: 700; color: var(--alerta); font-size: 13px; }
 .asim .filas { margin-top: 6px; }
+.asim.real { border-color: var(--ok); }
+.asim.real .fuente { color: var(--ok); }
+.asim .nota { margin: 6px 0 0; }
+
+/* sondeo del globo / CanSat */
+.sondeo { margin-top: 12px; font-size: 13px; }
+.sondeo summary { cursor: pointer; color: var(--tinta); font-weight: 600; }
+.sondeo textarea {
+  display: block; width: 100%; margin-top: 8px; padding: 7px 8px; resize: vertical;
+  font: 12px/1.4 var(--mono); background: var(--blanco); color: var(--tinta);
+  border: 1px solid var(--linea2); border-radius: 5px; box-sizing: border-box;
+}
+.sondeo-acc { display: flex; gap: 6px; }
+.boton.chico { margin-top: 8px; padding: 6px 8px; font-size: 12.5px; text-align: center; color: var(--acento-txt); }
+.sondeo-res .filas, .fusion .filas { margin-top: 6px; }
+.sondeo-res, .fusion { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--linea2); border-radius: 6px; }
+.sondeo-res:empty { display: none; }
+.sondeo-res .fuente, .fusion .fuente { font-weight: 700; font-size: 13px; color: var(--tinta); }
+
+/* sesgos declarados por las fuentes */
+.proc-adv { margin-top: 10px; }
+.proc-adv .sub { margin: 14px 0 0; font-size: 13px; color: var(--tinta); }
+.proc-adv .adv { margin-top: 8px; font-size: 12.5px; color: var(--tinta2); line-height: 1.45; }
+.proc-adv .adv b { color: var(--tinta); }
+
+/* expediente de la celda */
+.exp-grupo { margin-top: 10px; }
+.exp-grupo h4 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--tinta2); text-transform: uppercase; letter-spacing: .04em; }
+.exp-fila { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--linea); font-size: 12.5px; }
+.exp-fila .v { white-space: nowrap; color: var(--tinta); }
+.exp-fila .n { color: var(--tinta2); }
+.niv { display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 3px; font-size: 10.5px; border: 1px solid var(--linea2); color: var(--tinta3); }
+.niv.sintetico { border-color: var(--alerta); color: var(--alerta); }
 
 .leyenda { margin-top: 18px; }
 .ley-tit { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 12px; }

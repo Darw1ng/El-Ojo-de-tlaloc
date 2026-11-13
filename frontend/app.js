@@ -81,6 +81,10 @@ const RAMPAS = {
   amarillo_rojo: ['#1c242b', '#5b6a35', '#cfae38', '#ee8230', '#d9432f', '#9a1432'],
   verde_rojo:    ['#2a7f5c', '#8dc16a', '#f0cf5a', '#ee7f45', '#b5222f'],
 };
+RAMPAS.rojo_verde = [...RAMPAS.verde_rojo].reverse();
+// Dominio fijo para la aptitud: igual que /api/escalas, para que dos días se puedan comparar.
+// Más fino entre 0.6 y 0.8, que es donde cae el área de estudio.
+const DOMINIO_APTITUD = [0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.9];
 const CATEGORIAS = [
   { n: 'bajo', c: '#3f9970' },
   { n: 'moderado', c: '#e0bb40' },
@@ -367,9 +371,11 @@ function escalaVigente() {
 }
 function unidadVigente() {
   if (E.capa.modo === 'valor') return E.actual?.escala?.unidad || meta(E.capa.variable).u;
+  if (E.capa.modo === 'aptitud') return 'índice 0-1';
   return '%';
 }
 function formato(v) {
+  if (E.capa.modo === 'aptitud') return v.toFixed(2);
   if (E.capa.modo !== 'valor') return (v * 100).toFixed(v < 0.1 && v > 0 ? 1 : 0);
   return v.toFixed(meta(E.capa.variable).dec);
 }
@@ -379,13 +385,27 @@ function urlCapa(dia) {
   const id = encodeURIComponent(E.run.id);
   if (modo === 'valor') return `/api/corrida/${id}/capa?variable=${variable}&dia=${dia}&estadistico=${stat}`;
   if (modo === 'prob') return `/api/corrida/${id}/probabilidad?variable=${variable}&dia=${dia}&umbral=${umbral}&ventana_dias=${ventana}`;
+  if (modo === 'aptitud') return `/api/aptitud?nivel=${E.nivel}&id_corrida=${id}&dia=${dia}&ventana_dias=${ventana}&umbral_mm=${umbralRiesgo}`;
   return `/api/corrida/${id}/riesgo?dia=${dia}&ventana_dias=${ventana}&umbral_mm=${umbralRiesgo}`;
+}
+
+// /api/aptitud no trae la forma de una capa: se adapta para pintarla igual que las demás.
+function capaAptitud(r) {
+  return {
+    valores: r.aptitud,
+    ids_celdas: r.ids_celdas,
+    escala: { dominio: DOMINIO_APTITUD, paleta: 'rojo_verde', unidad: 'índice 0-1', etiqueta: 'Aptitud constructiva (tamiz)' },
+    advertencias: r.advertencias || [],
+    pesos: r.pesos_usados || {},
+    criterios: r.detalle_criterios || {},
+  };
 }
 
 function capaDia(dia) {
   const url = urlCapa(dia);
   if (!E.cacheCapas.has(url)) {
-    const p = api(url).catch((e) => { E.cacheCapas.delete(url); throw e; });
+    const p = api(url).then((r) => (url.startsWith('/api/aptitud') ? capaAptitud(r) : r))
+      .catch((e) => { E.cacheCapas.delete(url); throw e; });
     E.cacheCapas.set(url, p);
   }
   return E.cacheCapas.get(url);
@@ -410,6 +430,7 @@ async function muestraDia(dia) {
 async function refrescaCapa() {
   if (!E.run) return;
   E.actual = null;
+  E.medias = null;   // las medias de la capa anterior no valen para la nueva
   const dia = E.dia;
   await muestraDia(dia);
   pintaBarras();
@@ -442,14 +463,25 @@ function pintaLeyenda() {
   const esc_ = escalaVigente();
   const rampa = RAMPAS[esc_.paleta] || RAMPAS.azules;
   const paradas = rampa.map((c, i) => `${c} ${(i / (rampa.length - 1) * 100).toFixed(1)}%`).join(',');
-  const etiqueta = E.capa.modo === 'valor'
-    ? (a.escala?.etiqueta || meta(E.capa.variable).nombre)
-    : `P(${meta(E.capa.variable).nombre.toLowerCase()} > ${E.capa.umbral})`;
+  const etiqueta = E.capa.modo === 'prob'
+    ? `P(${meta(E.capa.variable).nombre.toLowerCase()} > ${E.capa.umbral})`
+    : (a.escala?.etiqueta || meta(E.capa.variable).nombre);
   const fmt = (d) => (E.capa.modo === 'prob' ? Math.round(d * 100) + '%' : String(d));
   cont.innerHTML = `
     <div class="ley-tit"><span class="etq">${esc(etiqueta)}</span><span>${esc(unidadVigente())}</span></div>
     <div class="barra-color" style="background:linear-gradient(90deg,${paradas})"></div>
-    <div class="ticks">${esc_.dominio.map((d) => `<span>${fmt(d)}</span>`).join('')}</div>`;
+    <div class="ticks">${esc_.dominio.map((d) => `<span>${fmt(d)}</span>`).join('')}</div>
+    ${E.capa.modo === 'aptitud' ? notasAptitud(a) : ''}`;
+}
+
+// Las advertencias de la aptitud son parte del producto: van a la vista, no en un tooltip.
+function notasAptitud(a) {
+  const pesos = Object.entries(a.pesos).map(([k, w]) =>
+    `<dt title="${esc(a.criterios[k] || '')}">${esc(k.replace(/_/g, ' '))}</dt><dd>${Math.round(w * 100)} %</dd>`).join('');
+  return `
+    <p class="nota">Verde: conviene medir ahí primero. Rojo: hay razones para descartar. El mar no aplica. Lo inundable sale del pronóstico del día elegido.</p>
+    <dl class="filas">${pesos}</dl>
+    ${a.advertencias.map((x) => `<p class="nota alerta">${esc(x)}</p>`).join('')}`;
 }
 
 /* ---------------------------------------------------------- línea de tiempo */
@@ -479,6 +511,7 @@ async function pintaBarras() {
     col.style.height = esNum(m) ? `${Math.max(3, (m / max) * 100 * 0.7)}%` : '2px';
     $('.v', b).textContent = esNum(m) ? formato(m) : '';
   });
+  marcaBarra();   // la media del día visible ya existe
 }
 
 function promedio(capa) {
@@ -491,7 +524,7 @@ function marcaBarra() {
   if (!E.run) return;
   const f = E.run.resumen.fechas[E.dia];
   $('#tl-fecha').textContent = f ? `${fechaCorta(f)}` : '—';
-  const nombre = E.capa.modo === 'riesgo' ? 'Riesgo' : meta(E.capa.variable).nombre;
+  const nombre = E.capa.modo === 'riesgo' ? 'Riesgo' : E.capa.modo === 'aptitud' ? 'Aptitud de terreno' : meta(E.capa.variable).nombre;
   $('#tl-titulo').textContent = `Día ${E.dia + 1} · ${nombre}`;
   const detalle = E.capa.modo === 'valor' ? E.capa.stat : E.capa.modo === 'prob' ? 'probabilidad' : null;
   $('#hud-capa').textContent = [nombre, detalle, f && fechaCorta(f)].filter(Boolean).join(' · ');
@@ -536,23 +569,37 @@ async function corre() {
 
     $('#asim').hidden = true;
     if ($('#f-radar').checked) {
+      const previo = sumaDias(fecha, -1);
+      const obs = await observacionNisar(previo);
+      const peticion = obs
+        ? { fecha: previo, nivel, miembros, semilla, ...obs.cuerpo }
+        : { fecha: previo, nivel, miembros, semilla, sintetica: true };
+      if (!obs) aviso(`No hay pasada de NISAR en los ${MAX_EDAD_NISAR} días previos a ${fechaCorta(fecha)} (temporada: 25 jun – 23 oct 2026). Uso el dato sintético.`, 9000);
       const asim = await api('/api/asimilar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fecha: sumaDias(fecha, -1), nivel, miembros, semilla, sintetica: true }),
+        body: JSON.stringify(peticion),
       });
       cuerpo.id_asimilacion = asim.id_asimilacion;
-      muestraAsimilacion(asim.diagnostico);
+      muestraAsimilacion(asim.diagnostico, obs);
     }
 
     if (nivel !== E.nivel || !E.malla) await cargaMalla(nivel);
 
-    const r = await api('/api/pronostico', {
+    // Con perfil de sonda o con la casilla, todas las fuentes: clima de NASA POWER,
+    // impermeabilidad de OSM y la μ del perfil. Sin ellas, el pronóstico climatológico.
+    const fusion = $('#f-fusion').checked || !!E.sondeo;
+    if (fusion) {
+      boton.textContent = 'Cruzando fuentes…';
+      if (E.sondeo) cuerpo.sondeo = E.sondeo.texto;
+    }
+    const r = await api(fusion ? '/api/pronostico/fusion' : '/api/pronostico', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cuerpo),
     });
     if (r.aviso) aviso(r.aviso, 9000);
+    muestraFusion(r.fusion || null, r.mu_detalle);
     E.run = { id: r.id_corrida, resumen: r.resumen };
     E.cacheCapas.clear();
     E.cacheCelda.clear();
@@ -594,12 +641,195 @@ function muestraResumen(r) {
   $('#escala-txt').textContent = r.escala;
 }
 
-function muestraAsimilacion(d) {
+function muestraFusion(f, mu) {
+  const cont = $('#fusion');
+  cont.hidden = !f;
+  if (!f) return;
+  const aportes = Object.entries(mu?.aportes || {})
+    .map(([k, v]) => `${esc(k.replace(/_/g, ' '))} ${v > 0 ? '+' : ''}${v.toFixed(2)}`).join(' · ');
+  cont.innerHTML = `
+    <div class="fuente">Pronóstico con todas las fuentes</div>
+    <dl class="filas">
+      <dt>Clima base</dt><dd>${esc(f.climatologia)}</dd>
+      <dt>Impermeabilidad</dt><dd>${esc(f.impermeabilidad)}</dd>
+      <dt>Perfil de sonda</dt><dd>${esc(f.sondeo)}</dd>
+      ${esNum(f.mu_campo_latente) ? `<dt>μ del perfil</dt><dd>${f.mu_campo_latente > 0 ? '+' : ''}${f.mu_campo_latente.toFixed(2)}</dd>` : ''}
+      <dt>Capas cruzadas</dt><dd>${f.capas_en_expediente}</dd>
+    </dl>
+    ${aportes ? `<p class="nota">Lo que movió la μ: ${aportes}.</p>` : ''}`;
+}
+
+/* -------------------------------------------------------- globo sonda / CanSat */
+
+async function leeSondeo() {
+  const texto = $('#f-sondeo').value.trim();
+  const cont = $('#sondeo-res');
+  if (!texto) { aviso('Pega el perfil o sube el archivo del globo.'); return; }
+  cont.innerHTML = '<p class="nota">Leyendo el perfil…</p>';
+  try {
+    const r = await api('/api/sondeo', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: texto });
+    const p = r.perfil, m = r.mu_campo_latente, ix = p.indices, it = p.interpretacion || {};
+    const n = (v, d = 0) => (esNum(v) ? v.toFixed(d) : '—');
+    const avisos = [...(p.avisos || []), ...(m.avisos || []), ...(p.cobertura_vertical?.avisos || [])];
+    if (m.nota_cobertura) avisos.push(m.nota_cobertura);
+    E.sondeo = m.confiable ? { texto, r } : null;
+    cont.innerHTML = `
+      <div class="fuente">${esc(p.fuente || p.estacion)} · ${esc(p.cobertura_vertical?.vuelo || '')}</div>
+      <p class="nota">${esc(p.registro?.mensaje || '')}</p>
+      <p class="nota"><b>${esc([it.inestabilidad, it.inhibicion, it.humedad_columna].filter(Boolean).join(', '))}</b>${it.potencial_tormenta ? `; potencial de tormenta ${esc(it.potencial_tormenta)}` : ''}.</p>
+      <dl class="filas">
+        <dt>CAPE</dt><dd>${n(ix.cape_j_kg)} J/kg</dd>
+        <dt>CIN</dt><dd>${n(ix.cin_j_kg)} J/kg</dd>
+        <dt>Agua precipitable</dt><dd>${n(ix.pwat_mm, 1)} mm</dd>
+        <dt>Base de nube (LCL)</dt><dd>${n(ix.lcl_m)} m</dd>
+        <dt>μ para el modelo</dt><dd>${esNum(m.mu) ? (m.mu > 0 ? '+' : '') + m.mu.toFixed(2) : '—'}</dd>
+      </dl>
+      ${avisos.map((x) => `<p class="nota alerta">${esc(x)}</p>`).join('')}
+      <p class="nota">${m.confiable
+        ? 'Se aplica al pronóstico. Coeficientes del probit provisionales hasta calibrarlos con sondeos históricos.'
+        : '<span class="alerta">Índices fuera de rango: el perfil no se usa y el pronóstico sigue climatológico.</span>'}</p>`;
+    $('#b-sondeo-x').hidden = false;
+    if (E.sondeo) corre();
+  } catch (e) {
+    E.sondeo = null;
+    cont.innerHTML = `<p class="nota alerta">No pude leer el perfil: ${esc(e.message)}</p>`;
+  }
+}
+
+function quitaSondeo() {
+  E.sondeo = null;
+  $('#f-sondeo').value = '';
+  $('#sondeo-res').innerHTML = '';
+  $('#b-sondeo-x').hidden = true;
+  corre();
+}
+
+/* ----------------------------------------------------- expediente y fuentes */
+
+const NOMBRES_DATO = {
+  area_pisos: 'Área de pisos', capacidad_suelo_mm: 'Agua que guarda el suelo', cobertura_uso_suelo: 'Uso de suelo mapeado',
+  densidad_cauces: 'Densidad de cauces', densidad_vial: 'Densidad vial', dist_costa_km: 'Distancia a la costa',
+  edificios: 'Edificios', elevacion_m: 'Elevación', fraccion_agua: 'Cuerpos de agua', fraccion_construida: 'Superficie construida',
+  fraccion_impermeable: 'Superficie impermeable', fraccion_pavimento: 'Pavimento', impermeabilidad_proxy_vial: 'Impermeable (por vialidad)',
+  impermeabilidad_uso_suelo: 'Impermeable (por uso de suelo)', infraestructura_critica: 'Infraestructura crítica',
+  peso_critico: 'Peso de lo crítico', dias_lluvia_power: 'Días de lluvia al año', lluvia_anual_power_mm: 'Lluvia anual',
+};
+const GRUPOS_DATO = { estatico: 'Territorio', climatologico: 'Clima de 21 años', observado: 'Observado', derivado: 'Derivado' };
+const NIVELES = { observado: 'observado', reanalisis: 'reanálisis', derivado: 'derivado', sintetico: 'sintético' };
+
+function valorDato(d) {
+  const v = d.valor;
+  if (!esNum(v)) return 'no aplica';
+  if (d.unidad === '0-1') return `${(v * 100).toFixed(v < 0.1 ? 1 : 0)} %`;
+  if (d.unidad === 'conteo') return Math.round(v).toLocaleString('es-MX');
+  if (d.unidad === 'm2') return `${Math.round(v).toLocaleString('es-MX')} m²`;
+  const u = { 'dias/ano': 'días/año', 'mm/ano': 'mm/año', 'km/km2': 'km/km²' }[d.unidad] ?? d.unidad;
+  return `${v.toFixed(Math.abs(v) >= 100 ? 0 : 1)} ${u}`;
+}
+
+async function pintaExpediente(id) {
+  const cont = $('#exp-celda');
+  const clave = `${E.nivel}|${id}`;
+  E.cacheExp ??= new Map();
+  if (!E.cacheExp.has(clave)) {
+    cont.innerHTML = '<p class="nota">Cruzando las fuentes de esta celda…</p>';
+    E.cacheExp.set(clave, api(`/api/expediente/celda/${encodeURIComponent(id)}?nivel=${E.nivel}`)
+      .catch((e) => { E.cacheExp.delete(clave); throw e; }));
+  }
+  try {
+    const d = await E.cacheExp.get(clave);
+    if (E.seleccion !== id) return;
+    const grupos = Object.entries(d.datos || {}).map(([g, datos]) => {
+      const filas = Object.entries(datos).filter(([k]) => k !== 'es_tierra').map(([k, x]) => `
+        <div class="exp-fila" title="${esc(x.fuente)}">
+          <span class="n">${esc(NOMBRES_DATO[k] || k.replace(/_/g, ' '))}<span class="niv ${esc(x.nivel)}">${esc(NIVELES[x.nivel] || x.nivel)}</span></span>
+          <span class="v">${valorDato(x)}</span>
+        </div>`).join('');
+      return filas ? `<div class="exp-grupo"><h4>${esc(GRUPOS_DATO[g] || g)}</h4>${filas}</div>` : '';
+    }).join('');
+    cont.innerHTML = grupos + `<p class="nota">Pasa el cursor por un dato para ver su fuente. Lo marcado como <span class="alerta">sintético</span> lo generamos nosotros: no es observación.</p>`;
+  } catch (e) {
+    cont.innerHTML = `<p class="nota">Sin expediente: ${esc(e.message)}</p>`;
+  }
+}
+
+const NOMBRES_SESGO = { weibull_forma: 'Lluvias extremas', frac_dias_lluvia: 'Días con lluvia', tmax_mensual: 'Temperatura máxima' };
+
+async function pintaSesgos() {
+  try {
+    const r = await api('/api/expediente');
+    const adv = r.advertencias || [];
+    if (!adv.length) return;
+    $('#proc-adv').innerHTML = `<h3 class="sub">Sesgos que declaran las fuentes</h3>` + adv.map((a) => `
+      <p class="adv"><b>${esc(NOMBRES_SESGO[a.variable] || a.variable)}: ${esc(a.sesgo)}.</b> ${esc(a.detalle)}
+      <br><em>Se corrige con: ${esc(a.como_se_corrige)}.</em></p>`).join('');
+  } catch (_) { /* sin expediente: el panel se queda con lo fijo */ }
+}
+
+/* NISAR real: la historia (nisar/) ya trae, por hexágono de 1.4 km, un índice de humedad
+   de suelo por detección de cambio para cada una de las 10 pasadas. Se manda como puntos
+   (centroide + índice) y el backend los promedia al hexágono del nivel que se esté usando.
+   Es un índice RELATIVO (0 = 2º mínimo de la serie, 1 = 2º máximo), no saturación medida:
+   por eso va con sigma alta y así se rotula. Sólo cubre la zona conurbada. */
+const MAX_EDAD_NISAR = 24;   // dos revisitas de 12 días
+const SIGMA_NISAR = 0.2;
+let nisarHex = null;
+
+async function cargaNisar() {
+  if (nisarHex) return nisarHex;
+  const [meta, hex] = await Promise.all(
+    ['nisar/datos/meta.json', 'nisar/datos/hex.geojson'].map((u) => fetch(u).then((r) => {
+      if (!r.ok) throw new Error(`${u}: ${r.status}`);
+      return r.json();
+    })),
+  );
+  const celdas = hex.features.map((f) => {
+    const anillo = f.geometry.type === 'Polygon' ? f.geometry.coordinates[0] : f.geometry.coordinates[0][0];
+    const pts = anillo.slice(0, -1);
+    const lon = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+    const lat = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+    return { lat, lon, idx: f.properties.humedad_idx || [] };
+  });
+  nisarHex = { fechas: meta.fechas, celdas };
+  return nisarHex;
+}
+
+async function observacionNisar(fechaObs) {
+  let n;
+  try { n = await cargaNisar(); } catch (_) { return null; }
+  // la pasada más reciente que ya existía el día de la observación
+  let k = -1;
+  n.fechas.forEach((f, i) => { if (f <= fechaObs) k = i; });
+  if (k < 0) return null;
+  const edad = Math.round((new Date(fechaObs) - new Date(n.fechas[k])) / 864e5);
+  if (edad > MAX_EDAD_NISAR) return null;
+  const lat = [], lon = [], val = [];
+  for (const c of n.celdas) {
+    const v = c.idx[k];
+    if (!esNum(v)) continue;          // sin suelo observable (agua, ciudad, mar): no es 0
+    lat.push(c.lat); lon.push(c.lon); val.push(Math.min(1, Math.max(0, v)));
+  }
+  if (!val.length) return null;
+  return {
+    fecha: n.fechas[k], edad, celdas: val.length,
+    cuerpo: {
+      puntos_lat: lat, puntos_lon: lon, puntos_valor: val,
+      unidad: 'saturacion', sigma: SIGMA_NISAR,
+      fuente: `NISAR GCOV ${n.fechas[k]} · índice de humedad relativo (detección de cambio)`,
+    },
+  };
+}
+
+function muestraAsimilacion(d, obs) {
   const cont = $('#asim');
   cont.hidden = false;
+  cont.classList.toggle('real', !!obs);
   const pct = (x) => `${(x * 100).toFixed(0)} %`;
+  const nota = obs
+    ? `<p class="nota">Pasada del ${fechaCorta(obs.fecha)} (${obs.edad} días antes del arranque). Cubre sólo la zona conurbada; el resto del dominio se queda con el modelo. Es un índice relativo usado como saturación, con incertidumbre ±${SIGMA_NISAR}.</p>`
+    : '';
   cont.innerHTML = `
-    <div class="fuente">${esc(d.fuente)}</div>
+    <div class="fuente">${esc(d.fuente)}</div>${nota}
     <dl class="filas">
       <dt>Celdas observadas</dt><dd>${d.celdas_observadas} / ${d.celdas_totales}</dd>
       <dt>Peso del radar</dt><dd>${pct(d.ganancia_media)}</dd>
@@ -647,15 +877,18 @@ function sincronizaControles() {
   document.querySelectorAll('#s-modo button').forEach((b) => b.classList.toggle('on', b.dataset.modo === modo));
   document.querySelectorAll('#l-vars li').forEach((li) => li.classList.toggle('on', li.dataset.v === E.capa.variable));
   document.querySelectorAll('#s-stat button').forEach((b) => b.classList.toggle('on', b.dataset.s === E.capa.stat));
-  $('#l-vars').hidden = modo === 'riesgo';
+  const conRiesgo = modo === 'riesgo' || modo === 'aptitud';
+  $('#l-vars').hidden = conRiesgo;
   $('#c-stat').hidden = modo !== 'valor';
   $('#c-umbral').hidden = modo === 'valor';
   const v = meta(E.capa.variable);
-  $('#u-unidad').textContent = modo === 'riesgo' ? '(mm de escurrimiento)' : `(${v.u})`;
-  $('#f-umbral').value = modo === 'riesgo' ? E.capa.umbralRiesgo : E.capa.umbral;
+  $('#u-unidad').textContent = conRiesgo ? '(mm de escurrimiento)' : `(${v.u})`;
+  $('#f-umbral').value = conRiesgo ? E.capa.umbralRiesgo : E.capa.umbral;
   $('#n-modo').textContent = modo === 'riesgo'
     ? 'Probabilidad de que el escurrimiento acumulado pase el umbral. Sobre el mar no aplica: esas celdas quedan sin pintar.'
-    : 'P(variable > umbral) en cada celda. Lluvia, escurrimiento y ET0 se acumulan en la ventana; temperatura y suelo toman el máximo.';
+    : modo === 'aptitud'
+      ? 'Tamiz de terreno para constructoras: combina inundabilidad (con este umbral), pendiente, suelo firme, accesos, servicios y suelo disponible.'
+      : 'P(variable > umbral) en cada celda. Lluvia, escurrimiento y ET0 se acumulan en la ventana; temperatura y suelo toman el máximo.';
 }
 
 function enlazaControles() {
@@ -667,7 +900,7 @@ function enlazaControles() {
   $('#f-umbral').addEventListener('change', (ev) => {
     const x = Number(ev.target.value);
     if (!(x > 0)) return;
-    if (E.capa.modo === 'riesgo') E.capa.umbralRiesgo = x; else E.capa.umbral = x;
+    if (E.capa.modo === 'riesgo' || E.capa.modo === 'aptitud') E.capa.umbralRiesgo = x; else E.capa.umbral = x;
     refrescaCapa();
   });
   $('#f-ventana').addEventListener('change', (ev) => { E.capa.ventana = Number(ev.target.value); refrescaCapa(); });
@@ -681,6 +914,15 @@ function enlazaControles() {
     $('#b-pie').setAttribute('aria-expanded', String(!t.hidden));
   });
   $('#f-nivel').addEventListener('change', () => { corre(); });
+  $('#b-sondeo').addEventListener('click', () => leeSondeo());
+  $('#b-sondeo-x').addEventListener('click', quitaSondeo);
+  $('#f-sondeo-arch').addEventListener('change', async (ev) => {
+    const archivo = ev.target.files?.[0];
+    if (!archivo) return;
+    $('#f-sondeo').value = await archivo.text();
+    ev.target.value = '';
+    leeSondeo();
+  });
   document.addEventListener('keydown', (ev) => {
     if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName || '')) return;
     if (ev.key === 'Escape') cierraCelda();
@@ -742,6 +984,7 @@ async function pintaCeldaDatos() {
       : Promise.resolve(null);
     E.cacheCelda.set(clave, Promise.all([serie, obra]).then(([s, o]) => ({ serie: s, obra: o })));
   }
+  pintaExpediente(id);
   try {
     const datos = await E.cacheCelda.get(clave);
     if (E.seleccion !== id) return;
@@ -910,6 +1153,7 @@ async function arranca() {
     }).catch(() => {});
     aplicaEnlace();
     await corre();
+    pintaSesgos();
     const celda = new URLSearchParams(location.search).get('celda');
     if (celda && indice.has(celda)) seleccionaCelda(celda);
   } catch (e) {
