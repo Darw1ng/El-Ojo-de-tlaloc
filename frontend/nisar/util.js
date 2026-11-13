@@ -1,7 +1,7 @@
 /* Utilidades de la historia NISAR: idioma y textos con respaldo en español, formatos
    de fecha y número por idioma, estado en el hash de la URL, localStorage protegido,
    constructores de nodos DOM/SVG y caché de imágenes como blobs (una sola descarga
-   por archivo, que luego Mapbox toma por URL de objeto). */
+   por archivo, que luego MapLibre toma por URL de objeto). */
 (function () {
   const U = {};
   const textos = { es: {}, en: {} };
@@ -158,6 +158,15 @@
     }
     return limpias.get(url);
   };
+
+  // ¿La sirve servir.py (con /tiles y el tablero detrás) o es un sitio estático como
+  // GitHub Pages? Se pregunta una sola vez por un mosaico del proxy.
+  let servidor = null;
+  U.conServidor = () => servidor || (servidor = fetch('../tiles/1/0/0.png', { cache: 'no-store' })
+    .then((r) => r.ok && /^image\//.test(r.headers.get('content-type') || ''))
+    .catch(() => false));
+  // Sin backend el tablero no corre: su enlace lleva al repositorio, donde se explica cómo arrancarlo.
+  U.REPO = 'https://github.com/Darw1ng/El-Ojo-de-tlaloc#arrancar';
 
   window.U = U;
 })();

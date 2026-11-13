@@ -14,7 +14,8 @@ guide when it is published and fill in the two links.
 
 **Project demo:** `<link to demo_en.mp4 or slides>`
 
-**Final project:** `<link to the repository / deployed story map>`
+**Final project:** https://darw1ng.github.io/El-Ojo-de-tlaloc/ (story map) ·
+https://github.com/Darw1ng/El-Ojo-de-tlaloc (code)
 
 ## High-level summary
 
@@ -51,7 +52,7 @@ dates, and a click-anywhere popup with that pixel's HH/HV time series.
    change and a change-detection soil-moisture index. Finally it crosses
    everything with NASA POWER rainfall and with OpenStreetMap lagoons,
    schools, clinics and emergency services, on the project's hexagonal grid.
-3. The web app (`frontend/nisar/`) is plain HTML/CSS/JS with Mapbox GL JS. It
+3. The web app (`frontend/nisar/`) is plain HTML/CSS/JS with MapLibre GL JS over OpenStreetMap. It
    needs no build step and runs as a static site.
 
 **What we found.**
@@ -74,7 +75,7 @@ half-degree NASA POWER point. The moisture index is relative, not volumetric.
 The lagoon interpretation has not been checked in the field.
 
 **Tools.** Python (numpy, scipy, scikit-image, h5py, rasterio, earthaccess,
-Pillow), FastAPI for the forecasting backend, Mapbox GL JS, HyperFrames for the
+Pillow), FastAPI for the forecasting backend, MapLibre GL JS, Leaflet, HyperFrames for the
 demo video, ffmpeg.
 
 ## NASA data
@@ -92,7 +93,7 @@ demo video, ffmpeg.
   health and emergency facilities.
 - Ramsar Sites Information Service, site 1450 (Sistema de Lagunas
   Interdunarias de la Ciudad de Veracruz).
-- Mapbox base maps.
+- Esri World Imagery (satellite base map).
 
 ## Use of artificial intelligence
 

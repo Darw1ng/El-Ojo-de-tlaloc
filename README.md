@@ -14,7 +14,7 @@ equipo Amigos de Timmy (Universal Event) · entrega **15-nov-2026**.
 ![Diez pasadas de NISAR sobre la zona conurbada, 25 jun – 23 oct 2026](frontend/nisar/datos/medios/timelapse.gif)
 
 **«El baile del agua»** (`frontend/nisar/`) es la respuesta directa al reto:
-una historia interactiva en español e inglés, con Mapbox, hecha con **diez
+una historia interactiva en español e inglés, con MapLibre y OpenStreetMap, hecha con **diez
 pasadas reales de NISAR** (GCOV, banda L, HH + HV, 10 m) sobre la zona
 conurbada durante la temporada de lluvias de 2026. Muestra el agua que aparece
 y desaparece, la humedad del suelo que sube después de la lluvia, las lagunas
@@ -26,9 +26,17 @@ con línea de tiempo, comparador de fechas y la serie de cualquier punto.
 cd frontend && python servir.py          # http://localhost:5173/nisar/
 ```
 
-Necesita `frontend/nisar/config.local.js` con `window.MAPBOX_TOKEN` (ver
-`config.example.js`; no se versiona) o `?token=pk...` en la URL. Método,
+No necesita token: el mapa base sale de OpenStreetMap por `/tiles` de
+`servir.py` (con caché) y la imagen satelital de Esri. Método,
 cifras y límites en [docs/08-nisar-veracruz.md](docs/08-nisar-veracruz.md).
+
+**En línea (GitHub Pages):** https://darw1ng.github.io/El-Ojo-de-tlaloc/ — la
+publica `.github/workflows/pages.yml` en cada push a `main` que toque la historia
+(una sola vez: *Settings → Pages → Source: GitHub Actions*). El sitio lo arma
+`python scripts/sitio_pages.py _sitio`: sólo la historia, sin los videos. Ahí no hay
+`servir.py`, así que pide los mosaicos directo a OpenStreetMap (con respaldo al gris
+de Esri si OSM los rechaza) y el enlace al tablero lleva a este README, porque el
+tablero necesita el backend.
 
 Video de demo de 30 s para la entrega: `frontend/nisar/datos/medios/demo_en.mp4`
 (y `demo_es.mp4`); el proyecto de HyperFrames que lo genera no vive en este repo.
@@ -86,7 +94,7 @@ hexágonos y qué significa exactamente la escala 1:16.
 | **NASA POWER** | **listo, datos reales**: 21 años de series diarias |
 | **Globo sonda (CAPE/CIN/PWAT → μ)** | **listo**, acepta sondeo público y CSV propio |
 | **Análisis: exposición, aptitud, ventanas** | **listo** |
-| Asimilación de humedad de suelo | **listo** (con observación sintética; falta enchufar gránulos de NISAR) |
+| Asimilación de humedad de suelo | **listo, con NISAR real**: el tablero manda el índice de humedad de la pasada más cercana (sintético sólo fuera de la temporada 25 jun – 23 oct) |
 | Métricas de verificación | **listo** (CRPS, Brier, confiabilidad, dispersión) |
 | API HTTP | **listo**, 23 endpoints documentados en OpenAPI |
 | **NISAR GCOV (radar)** | **listo, datos reales**: 10 pasadas, agua, cambio, humedad del suelo, lagunas, exposición |
@@ -140,7 +148,7 @@ backend/            el modelo y la API (Python, solo numpy + FastAPI)
       ventanas.py   calendario de obra por actividad
     api/            capa HTTP
   tests/            306 pruebas
-frontend/           tablero de pronóstico (Leaflet) y nisar/, la historia de NISAR (Mapbox)
+frontend/           tablero de pronóstico (Leaflet) y nisar/, la historia de NISAR (MapLibre + OSM)
 scripts/            descarga de NISAR (nisar_gcov.py), productos y assets de la historia
 docs/               un documento por decisión, más la bitácora
 datos/              entrada y salida (no se versiona el contenido)

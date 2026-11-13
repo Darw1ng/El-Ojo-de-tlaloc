@@ -1,4 +1,4 @@
-/* Orquesta la historia NISAR de El Ojo de Tláloc: token y datos, portada con
+/* Orquesta la historia NISAR de El Ojo de Tláloc: datos, portada con
    time-lapse, capítulos con scrollytelling (IntersectionObserver, flyTo, cifras y
    gráficas), explorador con capas, línea de tiempo, comparador, serie por punto o
    laguna, equipamientos y leyenda; idioma ES/EN, estado en el hash y créditos.
@@ -22,21 +22,6 @@
   let tHash = 0;
   let avisoMapa = false;
   const animados = new Set();
-  const tokenPromesa = obtenerToken();
-
-  function obtenerToken() {
-    const q = new URLSearchParams(window.location.search).get('token');
-    if (q) return Promise.resolve(q.trim());
-    if (window.MAPBOX_TOKEN) return Promise.resolve(window.MAPBOX_TOKEN);
-    return new Promise((res) => {
-      const s = document.createElement('script');
-      s.src = 'config.local.js';
-      s.onload = () => res(window.MAPBOX_TOKEN || null);
-      s.onerror = () => res(null);
-      document.head.append(s);
-    });
-  }
-
   const n = () => meta.fechas.length;
   const nombreCapa = (c) => U.t('capa_' + c);
   const capasDisponibles = () => ORDEN_CAPAS.filter((c) => {
@@ -835,7 +820,7 @@
         lluvia.url ? U.el('a', { href: lluvia.url, target: '_blank', rel: 'noopener', text: U.t('cr_consulta') }) : null),
       U.el('li', {}, U.el('b', {}, '© ', U.el('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener', text: 'OpenStreetMap contributors' })), ' (ODbL) — ', U.t('cr_osm')),
       r ? U.el('li', {}, U.el('b', { text: 'Ramsar ' + r.sitio }), ' — ', U.t('cr_ramsar', { nombre: r.nombre, ha: U.num(r.area_ha, 1), anio: String(r.designado || '').slice(0, 4) })) : null,
-      U.el('li', {}, U.el('b', {}, '© ', U.el('a', { href: 'https://www.mapbox.com/about/maps/', target: '_blank', rel: 'noopener', text: 'Mapbox' })), ' — ', U.t('cr_mapbox'))
+      U.el('li', {}, U.el('b', { text: 'MapLibre GL JS' }), ' — ', U.t('cr_mapbox'))
     ];
     const metodo = U.t('cr_metodo', {
       hh: U.num(meta.umbrales.hh_db, 2).replace('-', '−'), hv: U.num(meta.umbrales.hv_db, 2).replace('-', '−'),
@@ -845,8 +830,18 @@
       U.el('div', { class: 'cr-col' }, U.el('h3', { text: U.t('cr_datos') }), U.el('ul', { class: 'cr-lista' }, lista)),
       U.el('div', { class: 'cr-col' }, U.el('h3', { text: U.t('cr_metodo_tit') }), U.el('p', { text: metodo }),
         U.el('h3', { text: U.t('cr_equipo_tit') }), U.el('p', { text: U.t('cr_equipo') }),
-        U.el('p', {}, U.el('a', { href: '../index.html', class: 'cr-volver', text: '← ' + U.t('cr_tablero') })))
+        U.el('p', {}, U.el('a', { href: '../index.html', class: 'cr-volver enlace-tab', text: '← ' + U.t('cr_tablero') })))
     ];
+  }
+
+  // En un sitio estático no hay tablero (necesita el backend): sus enlaces van al repositorio.
+  function apuntarTablero(conServidor) {
+    if (conServidor) return;
+    for (const a of document.querySelectorAll('a[href="../index.html"]')) {
+      a.href = U.REPO;
+      a.target = '_blank';
+      a.rel = 'noopener';
+    }
   }
 
   function construirCreditos() {
@@ -873,6 +868,7 @@
     sincronizarPanel();
     if (linea) linea.textos();
     construirCreditos();
+    U.conServidor().then(apuntarTablero);
     actualizarChip();
     actualizarCortina();
     if (mapaListo) {
@@ -1055,14 +1051,8 @@
     llenarSelects();
     linea = new LineaTiempo($('#linea'), { meta, alCambiar: cambiarFecha });
     Mapa.cargarDatos(meta);
-    const token = await tokenPromesa;
-    if (!token) {
-      $('#cargando').hidden = true;
-      mostrarAviso('token', true);
-      observar();
-      return;
-    }
-    if (!window.mapboxgl) {
+    U.conServidor().then(apuntarTablero);
+    if (!window.maplibregl) {
       $('#cargando').hidden = true;
       mostrarAviso('mapbox', true);
       observar();
@@ -1070,7 +1060,7 @@
     }
     try {
       await Mapa.iniciar({
-        meta, token, contenedor: 'mapa', base: S.base,
+        meta, contenedor: 'mapa', base: S.base,
         manejadores: {
           error: errorMapa,
           clic: alClic,

@@ -1,12 +1,40 @@
-/* Mapa de la historia NISAR con Mapbox GL JS 3.8: imágenes de radar en dos ranuras
+/* Mapa de la historia NISAR con MapLibre GL JS 4.7 (fork libre de Mapbox GL, sin token): imágenes de radar en dos ranuras
    que se funden entre fechas, lagunas de OSM coloreadas por firma de radar, hexágonos
    3D (altura = agua temporal; color = exposición o humedad de la fecha), escuelas/salud/
    emergencia, zona resaltada, etiquetas, base oscura o satelital, comparador con un
    segundo mapa sincronizado y recortado, y lectura de pixeles.bin para la serie HH/HV. */
 (function () {
+  const GL = window.maplibregl;
+  // Bases sin token: OpenStreetMap (por /tiles de servir.py, que lo cachea y le pone su
+  // User-Agent) invertido a oscuro, y la imagen satelital de Esri que ya usa el tablero.
+  const GLIFOS = 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf';
+  const OSM = new URL('../tiles/', location.href).href + '{z}/{x}/{y}.png';
+  const estilo = (fuente, pintura) => ({
+    version: 8,
+    glyphs: GLIFOS,
+    sources: { base: fuente },
+    layers: [
+      { id: 'fondo', type: 'background', paint: { 'background-color': '#0f1214' } },
+      { id: 'base', type: 'raster', source: 'base', paint: pintura }
+    ]
+  });
+  const ATRIB_OSM = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+  // brillo min > max invierte el mosaico: calles claras sobre fondo oscuro
+  const INVERTIDO = { 'raster-saturation': -1, 'raster-brightness-min': 0.86, 'raster-brightness-max': 0.06, 'raster-contrast': 0.15 };
+  // Sitio estático (GitHub Pages): sin proxy /tiles, los mosaicos se piden directo a OSM
+  // (el navegador manda el Referer del sitio, que es lo que pide su política de uso).
+  const OSCURO_ESTATICO = estilo(
+    { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 19, attribution: ATRIB_OSM },
+    INVERTIDO);
+  // Respaldo si OSM rechaza los mosaicos: el gris oscuro de Esri, que no pide llave.
+  const OSCURO_RESPALDO = estilo(
+    { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 16, attribution: 'Esri, HERE, Garmin, © OpenStreetMap' },
+    {});
   const ESTILOS = {
-    oscuro: 'mapbox://styles/mapbox/dark-v11',
-    satelite: 'mapbox://styles/mapbox/satellite-streets-v12'
+    oscuro: estilo({ type: 'raster', tiles: [OSM], tileSize: 256, maxzoom: 19, attribution: ATRIB_OSM }, INVERTIDO),
+    satelite: estilo(
+      { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19, attribution: 'Imagen: Esri, Maxar, Earthstar Geographics' },
+      { 'raster-saturation': -0.2 })
   };
   const OPACAS = new Set(['rgb', 'hh', 'hv', 'humedad']);
   const VACIO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=';
@@ -22,7 +50,7 @@
     agua: ['*', ['sqrt', ['coalesce', ['feature-state', 'p'], 0]], 160],
     humedad: ['*', ['sqrt', ['+', ['get', 'n_escuelas'], ['get', 'n_salud'], ['get', 'n_emergencia']]], 230]
   };
-  const FUENTE_TXT = ['DIN Pro Medium', 'Arial Unicode MS Regular'];
+  const FUENTE_TXT = ['Open Sans Semibold'];
   const VACIA = { type: 'FeatureCollection', features: [] };
 
   const M = {};
@@ -168,10 +196,9 @@
 
   function crearMapa(contenedor, conControles) {
     const [w, s, e, n] = meta.bbox;
-    const map = new mapboxgl.Map({
+    const map = new GL.Map({
       container: contenedor,
       style: ESTILOS[base],
-      projection: 'mercator',
       bounds: [[w, s], [e, n]],
       fitBoundsOptions: { padding: 24 },
       maxBounds: [[w - 0.45, s - 0.3], [e + 0.45, n + 0.3]],
@@ -179,23 +206,34 @@
       maxZoom: 17,
       maxPitch: 65,
       attributionControl: false,
-      logoPosition: 'bottom-right',
       antialias: true,
       fadeDuration: 120,
       cooperativeGestures: false
     });
-    map.addControl(new mapboxgl.AttributionControl({
+    map.addControl(new GL.AttributionControl({
       compact: true,
       customAttribution: 'NISAR: NASA/JPL-Caltech/ISRO · NASA POWER'
     }), 'bottom-right');
     const reg = { map, proyector: new Proyector(map), marcas: [], nav: null, conControles };
     reg.listo = new Promise((res, rej) => {
       map.once('load', () => res());
-      map.once('error', (ev) => {
-        if (!map.loaded()) rej(ev && ev.error ? ev.error : new Error('mapbox'));
-      });
+      const alFallar = (ev) => {
+        if (ev && ev.sourceId === 'base') return;   // la base tiene respaldo: no tumba el mapa
+        map.off('error', alFallar);
+        if (!map.loaded()) rej(ev && ev.error ? ev.error : new Error('mapa'));
+      };
+      map.on('error', alFallar);
     });
+    let fallosBase = 0;
     map.on('error', (ev) => {
+      // Mosaicos de la base rechazados (p. ej. OSM con 403): se pasa una vez al respaldo.
+      if (ev && ev.sourceId === 'base') {
+        if (base === 'oscuro' && ESTILOS.oscuro === OSCURO_ESTATICO && ++fallosBase >= 3) {
+          ESTILOS.oscuro = OSCURO_RESPALDO;
+          for (const r of [A, B]) if (r) r.map.setStyle(OSCURO_RESPALDO, { diff: false });
+        }
+        return;
+      }
       const st = ev && ev.error && ev.error.status;
       if (manejadores.error) manejadores.error(st === 401 || st === 403 ? 'token' : 'mapa', ev && ev.error);
     });
@@ -372,7 +410,7 @@
     }
     if (reg.conControles) {
       if (si && !reg.nav) {
-        reg.nav = new mapboxgl.NavigationControl({ visualizePitch: true });
+        reg.nav = new GL.NavigationControl({ visualizePitch: true });
         map.addControl(reg.nav, 'top-right');
       } else if (!si && reg.nav) {
         map.removeControl(reg.nav);
@@ -509,7 +547,7 @@
       if (!Number.isFinite(e.lon) || !Number.isFinite(e.lat)) continue;
       const cuerpo = U.el('span', { class: 'etq-cuerpo' }, U.el('span', { class: 'etq-punto' }), U.el('span', { class: 'etq-txt', text: U.loc(e.texto) }));
       const nodo = U.el('div', { class: 'etq-mapa' }, cuerpo);
-      const mk = new mapboxgl.Marker({ element: nodo, anchor: 'center' }).setLngLat([e.lon, e.lat]).addTo(reg.map);
+      const mk = new GL.Marker({ element: nodo, anchor: 'center' }).setLngLat([e.lon, e.lat]).addTo(reg.map);
       reg.marcas.push(mk);
       requestAnimationFrame(() => requestAnimationFrame(() => cuerpo.classList.add('visible')));
     }
@@ -549,7 +587,7 @@
     meta = opciones.meta;
     base = opciones.base || 'oscuro';
     manejadores = opciones.manejadores || {};
-    mapboxgl.accessToken = opciones.token;
+    if (!(await U.conServidor())) ESTILOS.oscuro = OSCURO_ESTATICO;
     A = crearMapa(opciones.contenedor, true);
     A.map.on('click', (e) => {
       if (!interactivo || !manejadores.clic) return;
@@ -718,12 +756,12 @@
     const W = Math.max(120, cont.clientWidth - pad.left - pad.right - extra * 2);
     const H = Math.max(120, cont.clientHeight - pad.top - pad.bottom - extra * 2);
     const [w, s, e, n] = caja || meta.bbox;
-    const a = mapboxgl.MercatorCoordinate.fromLngLat([w, n]);
-    const b = mapboxgl.MercatorCoordinate.fromLngLat([e, s]);
+    const a = GL.MercatorCoordinate.fromLngLat([w, n]);
+    const b = GL.MercatorCoordinate.fromLngLat([e, s]);
     const dx = Math.max(b.x - a.x, 1e-9);
     const dy = Math.max(b.y - a.y, 1e-9);
     const zoom = Math.min(maxZoom, Math.log2(Math.min(W / (dx * 512), H / (dy * 512))));
-    const c = new mapboxgl.MercatorCoordinate((a.x + b.x) / 2, (a.y + b.y) / 2).toLngLat();
+    const c = new GL.MercatorCoordinate((a.x + b.x) / 2, (a.y + b.y) / 2).toLngLat();
     return { center: [c.lng, c.lat], zoom, pitch: 0, bearing: 0 };
   };
 
@@ -877,7 +915,7 @@
   M.popup = (lngLat, nodo) => {
     if (!A) return null;
     if (!popup) {
-      popup = new mapboxgl.Popup({ className: 'pp', maxWidth: 'none', closeButton: true, closeOnClick: false, focusAfterOpen: false, offset: 12 });
+      popup = new GL.Popup({ className: 'pp', maxWidth: 'none', closeButton: true, closeOnClick: false, focusAfterOpen: false, offset: 12 });
       popup.on('close', () => manejadores.popupCerrado && manejadores.popupCerrado());
     }
     popup.setLngLat(lngLat).setDOMContent(nodo);

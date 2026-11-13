@@ -1,8 +1,8 @@
 <!doctype html>
 <!-- El Ojo de Tláloc · NISAR: story map bilingüe y explorador de la temporada de lluvias
      2026 en Veracruz–Boca del Río vista por el radar NISAR (NASA Space Apps 2026, reto
-     "Dancing with the SARs"). Sitio estático: Mapbox GL JS 3.8 + JS plano, sin build.
-     El token se lee de config.local.js (fuera de git) o de ?token= en la URL. -->
+     "Dancing with the SARs"). Sitio estático: MapLibre GL JS 4.7 (vendor/) + JS plano, sin build y sin token.
+     El mapa base sale de OpenStreetMap por /tiles de servir.py. -->
 <html lang="es">
 <head>
 <meta charset="utf-8">
@@ -17,7 +17,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" href="../favicon.png">
 <link rel="stylesheet" href="../vendor/fuentes.css">
-<link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.css">
+<link rel="stylesheet" href="../vendor/maplibre-gl.css">
 <link rel="stylesheet" href="estilos.css">
 </head>
 <body class="modo-historia">
@@ -170,7 +170,7 @@
 
 <noscript><p class="aviso">Esta historia necesita JavaScript. / This story needs JavaScript.</p></noscript>
 
-<script src="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.js"></script>
+<script src="../vendor/maplibre-gl.js"></script>
 <script src="util.js"></script>
 <script src="textos.js"></script>
 <script src="capitulos.js"></script>
